@@ -41,14 +41,20 @@ fun SplashScreen(
             verticalArrangement = Arrangement.Center,
             modifier = Modifier.padding(24.dp)
         ) {
-            Image(
-                painter = painterResource(id = com.example.R.drawable.business_logo),
-                contentDescription = "ZeroBook Logo",
-                modifier = Modifier
-                    .size(160.dp)
-                    .clip(RoundedCornerShape(32.dp)),
-                contentScale = ContentScale.Fit
-            )
+            Surface(
+                modifier = Modifier.size(120.dp),
+                shape = RoundedCornerShape(24.dp),
+                color = Color.White
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "Z",
+                        color = Color(0xFF0F172A),
+                        fontWeight = FontWeight.Black,
+                        fontSize = 72.sp
+                    )
+                }
+            }
 
             Spacer(modifier = Modifier.height(24.dp))
 

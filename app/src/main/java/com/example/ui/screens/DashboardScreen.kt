@@ -143,13 +143,20 @@ fun DashboardScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Image(
-                        painter = painterResource(id = com.example.R.drawable.business_logo),
-                        contentDescription = "ZeroBook Logo",
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                    )
+                    Surface(
+                        modifier = Modifier.size(36.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xFF0F172A)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = "Z",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 18.sp
+                            )
+                        }
+                    }
                     Text(
                         text = "ZeroBook",
                         fontSize = 22.sp,
@@ -159,7 +166,7 @@ fun DashboardScreen(
                     )
                 }
                 Column(horizontalAlignment = Alignment.End) {
-                    val gstinDisplay = profile?.gstin?.ifBlank { "07AAAAA0000A1Z5" } ?: "07AAAAA0000A1Z5"
+                    val gstinDisplay = if (profile?.gstin.isNullOrBlank()) "NA" else profile!!.gstin
                     Text(
                         text = "GSTIN: $gstinDisplay",
                         fontSize = 10.sp,
