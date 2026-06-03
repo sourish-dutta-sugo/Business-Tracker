@@ -16,8 +16,10 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Assignment
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -300,6 +302,8 @@ fun NewVoucherScreen(
 
     // Dialog trigger flags
     var showUpiPaymentDialog by remember { mutableStateOf(false) }
+    var showConfirmSaveDialog by remember { mutableStateOf(false) }
+    var saveShouldPrint by remember { mutableStateOf(false) }
     var showPrintReceiptDialog by remember { mutableStateOf(false) }
     var printedVoucherId by remember { mutableStateOf<String?>(null) }
     var isSavingAndPrinting by remember { mutableStateOf(false) }
@@ -328,15 +332,29 @@ fun NewVoucherScreen(
         pstate.isNotEmpty() && pstate != bstate
     }
 
-    val saveTheVoucher: (Boolean) -> Unit = { shouldPrint ->
+    val validateAndSave: (Boolean) -> Unit = { shouldPrint ->
         val isBill = (selectedType != "RECEIPT" && selectedType != "PAYMENT")
         if (isBill && lineItems.isEmpty()) {
-            android.widget.Toast.makeText(context, "Cannot save/print: Add at least 1 item to buy!", android.widget.Toast.LENGTH_LONG).show()
+            android.widget.Toast.makeText(context, "Cannot save: Add at least 1 item!", android.widget.Toast.LENGTH_LONG).show()
         } else if (isBill && lineItems.any { it.qty <= 0.0 }) {
-            android.widget.Toast.makeText(context, "Cannot save/print: All products must have positive quantity values!", android.widget.Toast.LENGTH_LONG).show()
+            android.widget.Toast.makeText(context, "Cannot save: Invalid quantities!", android.widget.Toast.LENGTH_LONG).show()
+        } else if (!isBill && netAmount.value <= 0.0) {
+            android.widget.Toast.makeText(context, "Cannot save: Invalid amount!", android.widget.Toast.LENGTH_LONG).show()
+        } else if (paymentMode == "CHEQUE" && (chequeNo.isBlank() || bankName.isBlank())) {
+            android.widget.Toast.makeText(context, "Cannot save: Main Cheque details are missing!", android.widget.Toast.LENGTH_LONG).show()
+        } else if (voucherNo.isBlank()) {
+            android.widget.Toast.makeText(context, "Cannot save: Voucher Number is missing!", android.widget.Toast.LENGTH_LONG).show()
+        } else if ((selectedType == "PURCHASE" || selectedType == "PAYMENT") && selectedParty == null) {
+            android.widget.Toast.makeText(context, "Cannot save: Party is required for Purchase and Payment!", android.widget.Toast.LENGTH_LONG).show()
         } else {
-            val finalId = UUID.randomUUID().toString()
-            val voucherObj = Voucher(
+            saveShouldPrint = shouldPrint
+            showConfirmSaveDialog = true
+        }
+    }
+
+    val saveTheVoucher: (Boolean) -> Unit = { shouldPrint ->
+        val finalId = UUID.randomUUID().toString()
+        val voucherObj = Voucher(
                 id = finalId,
                 voucherNo = voucherNo,
                 type = selectedType,
@@ -370,7 +388,6 @@ fun NewVoucherScreen(
                     onNavigateBack()
                 }
             }
-        }
     }
 
     if (step == 1) {
@@ -920,28 +937,27 @@ fun NewVoucherScreen(
                                             var unitMenuExp by remember { mutableStateOf(false) }
                                             OutlinedTextField(
                                                 value = item.unit,
-                                                onValueChange = {},
-                                                readOnly = true,
+                                                onValueChange = { lineItems[index] = item.copy(unit = it.uppercase()) },
                                                 label = { Text("Unit", fontSize = 9.sp) },
                                                 textStyle = androidx.compose.ui.text.TextStyle(fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Colors.primary),
-                                                modifier = Modifier.fillMaxWidth().clickable { unitMenuExp = true },
+                                                modifier = Modifier.fillMaxWidth(),
                                                 singleLine = true,
                                                 trailingIcon = {
                                                     Icon(
                                                         imageVector = Icons.Default.KeyboardArrowDown,
                                                         contentDescription = null,
-                                                        modifier = Modifier.size(14.dp).clickable { unitMenuExp = true }
+                                                        modifier = Modifier.size(20.dp).clickable { unitMenuExp = true }
                                                     )
                                                 }
                                             )
                                             DropdownMenu(
                                                 expanded = unitMenuExp,
                                                 onDismissRequest = { unitMenuExp = false },
-                                                modifier = Modifier.background(Color.White)
+                                                modifier = Modifier.background(androidx.compose.material3.MaterialTheme.colorScheme.surface)
                                             ) {
                                                 listOf("PCS", "KG", "GM", "MG", "LTR", "ML", "BOX", "BAG", "NOS", "MTR").forEach { u ->
                                                     DropdownMenuItem(
-                                                        text = { Text(u, fontSize = 11.sp, color = Colors.textPrimary) },
+                                                        text = { Text(u, fontSize = 11.sp, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurface) },
                                                         onClick = {
                                                             unitMenuExp = false
                                                             lineItems[index] = item.copy(unit = u)
@@ -1108,13 +1124,7 @@ fun NewVoucherScreen(
                                 horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 Button(
-                                    onClick = {
-                                        if (lineItems.isEmpty()) {
-                                            // Empty lines check
-                                        } else {
-                                            saveTheVoucher(false)
-                                        }
-                                    },
+                                    onClick = { validateAndSave(false) },
                                     modifier = Modifier.weight(1f).height(48.dp).testTag("save_and_exit_button"),
                                     shape = RoundedCornerShape(8.dp),
                                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF64748B)) // Slate gray
@@ -1124,18 +1134,7 @@ fun NewVoucherScreen(
                                 }
                                 
                                 Button(
-                                    onClick = {
-                                        if (lineItems.isEmpty()) {
-                                            // Empty lines check
-                                        } else {
-                                            if (paymentMode == "UPI") {
-                                                // Trigger UPI QR payment verification simulation before printing
-                                                showUpiPaymentDialog = true
-                                            } else {
-                                                saveTheVoucher(true)
-                                            }
-                                        }
-                                    },
+                                    onClick = { validateAndSave(true) },
                                     modifier = Modifier.weight(1.1f).height(48.dp).testTag("save_and_print_button"),
                                     shape = RoundedCornerShape(8.dp),
                                     colors = ButtonDefaults.buttonColors(containerColor = Colors.primary)
@@ -1147,9 +1146,7 @@ fun NewVoucherScreen(
                         } else {
                             // Purchases or receipt/payments
                             Button(
-                                onClick = {
-                                    saveTheVoucher(false)
-                                },
+                                onClick = { validateAndSave(false) },
                                 modifier = Modifier.fillMaxWidth().height(48.dp).testTag("save_voucher_button"),
                                 shape = RoundedCornerShape(8.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = Colors.primary)
@@ -1369,9 +1366,9 @@ fun NewVoucherScreen(
             },
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(imageVector = Icons.Default.Assignment, contentDescription = null, tint = Colors.primary, modifier = Modifier.size(24.dp))
+                    Icon(imageVector = Icons.Default.Check, contentDescription = null, tint = Colors.success, modifier = Modifier.size(24.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Laser & Thermal Print Preview", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Colors.textPrimary)
+                    Text("Transaction Saved Successfully", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Colors.textPrimary)
                 }
             },
             text = {
@@ -1600,42 +1597,83 @@ fun NewVoucherScreen(
                 }
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        showPrintReceiptDialog = false
-                        try {
-                            val dateStr = sdf.format(Date(voucherDate))
-                            val itemsList = lineItems.toList()
-                            val saveDest = Utils.saveInvoiceToDeviceDownloads(
-                                context = context,
-                                profile = profile,
-                                voucherNo = voucherNo,
-                                dateFormatted = dateStr,
-                                partyName = selectedParty?.name ?: "Cash Customer",
-                                paymentMode = paymentMode,
-                                lineItems = itemsList,
-                                taxable = taxableAmount.value,
-                                cgst = cgst.value,
-                                sgst = sgst.value,
-                                igst = igst.value,
-                                roundOff = roundOff.value,
-                                net = netAmount.value
-                            )
-                            if (saveDest != null) {
-                                android.widget.Toast.makeText(context, "Saved invoice directly to Local Storage Downloads: $saveDest", android.widget.Toast.LENGTH_LONG).show()
-                            } else {
-                                android.widget.Toast.makeText(context, "Mock terminal printer job queued successfully.", android.widget.Toast.LENGTH_SHORT).show()
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            showPrintReceiptDialog = false
+                            try {
+                                val dateStr = sdf.format(Date(voucherDate))
+                                val itemsList = lineItems.toList()
+                                val pdfFile = PdfUtils.generatePdfInvoice(
+                                    context = context,
+                                    profile = profile,
+                                    voucherNo = voucherNo,
+                                    dateFormatted = dateStr,
+                                    partyName = selectedParty?.name ?: "Cash Customer",
+                                    paymentMode = paymentMode,
+                                    lineItems = itemsList,
+                                    taxable = taxableAmount.value,
+                                    cgst = cgst.value,
+                                    sgst = sgst.value,
+                                    igst = igst.value,
+                                    roundOff = roundOff.value,
+                                    net = netAmount.value
+                                )
+                                if (pdfFile != null) {
+                                    android.widget.Toast.makeText(context, "Saved invoice PDF directly to Local Storage Downloads", android.widget.Toast.LENGTH_LONG).show()
+                                }
+                            } catch (e: Exception) {
+                                e.printStackTrace()
                             }
-                        } catch (e: Exception) {
-                            e.printStackTrace()
-                        }
-                        onNavigateBack() // Go back as print job sent to system spooler successfully
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Colors.success)
-                ) {
-                    Icon(imageVector = Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Confirm Print Job", color = Color.White)
+                            onNavigateBack()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Colors.primary)
+                    ) {
+                        Icon(imageVector = Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Download PDF to Files", color = Color.White)
+                    }
+                    Button(
+                        onClick = {
+                            showPrintReceiptDialog = false
+                            try {
+                                val dateStr = sdf.format(Date(voucherDate))
+                                val itemsList = lineItems.toList()
+                                val pdfFile = PdfUtils.generatePdfInvoice(
+                                    context = context,
+                                    profile = profile,
+                                    voucherNo = voucherNo,
+                                    dateFormatted = dateStr,
+                                    partyName = selectedParty?.name ?: "Cash Customer",
+                                    paymentMode = paymentMode,
+                                    lineItems = itemsList,
+                                    taxable = taxableAmount.value,
+                                    cgst = cgst.value,
+                                    sgst = sgst.value,
+                                    igst = igst.value,
+                                    roundOff = roundOff.value,
+                                    net = netAmount.value
+                                )
+                                if (pdfFile != null) {
+                                    val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.provider", pdfFile)
+                                    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                        type = "application/pdf"
+                                        putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                                        addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    }
+                                    context.startActivity(android.content.Intent.createChooser(intent, "Share Invoice PDF"))
+                                }
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                            onNavigateBack()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25D366))
+                    ) {
+                        Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Share via WhatsApp / Other", color = Color.White)
+                    }
                 }
             },
             dismissButton = {
@@ -1644,6 +1682,32 @@ fun NewVoucherScreen(
                     onNavigateBack()
                 }) {
                     Text("Close & Exit", color = Colors.danger)
+                }
+            }
+        )
+    }
+
+    if (showConfirmSaveDialog) {
+        AlertDialog(
+            onDismissRequest = { showConfirmSaveDialog = false },
+            title = { Text("Confirm Save", fontWeight = FontWeight.Bold) },
+            text = { Text("Are you sure you want to save this transaction?", fontSize = 14.sp) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showConfirmSaveDialog = false
+                    val isSaleOrReturn = selectedType == "SALE" || selectedType == "SALE_RETURN"
+                    if (saveShouldPrint && paymentMode == "UPI" && isSaleOrReturn) {
+                        showUpiPaymentDialog = true
+                    } else {
+                        saveTheVoucher(saveShouldPrint)
+                    }
+                }) {
+                    Text("Save", color = Colors.primary, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConfirmSaveDialog = false }) {
+                    Text("Cancel", color = Colors.danger)
                 }
             }
         )
@@ -1809,25 +1873,25 @@ fun NewVoucherScreen(
                         Box(modifier = Modifier.weight(1f)) {
                             RetailTextField(
                                 value = newProdUnit,
-                                onValueChange = {},
+                                onValueChange = { newProdUnit = it.uppercase() },
                                 label = "Unit *",
-                                readOnly = true,
+                                readOnly = false,
                                 trailingIcon = {
                                     Icon(
                                         imageVector = Icons.Default.KeyboardArrowDown,
                                         contentDescription = null,
-                                        modifier = Modifier.clickable { unitExpanded = true }
+                                        modifier = Modifier.clickable { unitExpanded = true }.padding(4.dp)
                                     )
                                 }
                             )
                             DropdownMenu(
                                 expanded = unitExpanded,
                                 onDismissRequest = { unitExpanded = false },
-                                modifier = Modifier.background(Color.White)
+                                modifier = Modifier.background(androidx.compose.material3.MaterialTheme.colorScheme.surface)
                             ) {
                                 units.forEach { item ->
                                     DropdownMenuItem(
-                                        text = { Text(item, color = Colors.textPrimary) },
+                                        text = { Text(item, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurface) },
                                         onClick = {
                                             newProdUnit = item
                                             unitExpanded = false

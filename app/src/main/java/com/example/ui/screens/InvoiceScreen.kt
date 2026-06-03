@@ -10,6 +10,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
@@ -383,7 +384,7 @@ fun InvoiceScreen(
                             try {
                                 val javaSdf = java.text.SimpleDateFormat("dd-MM-yyyy HH:mm", java.util.Locale.US)
                                 val dateStr = javaSdf.format(java.util.Date(v.createdAt))
-                                val saveDest = Utils.saveInvoiceToDeviceDownloads(
+                                val pdfFile = PdfUtils.generatePdfInvoice(
                                     context = context,
                                     profile = prof,
                                     voucherNo = v.voucherNo,
@@ -398,22 +399,21 @@ fun InvoiceScreen(
                                     roundOff = v.roundOff,
                                     net = v.netAmount
                                 )
-                                if (saveDest != null) {
-                                    Toast.makeText(context, "Saved invoice directly to Downloads: $saveDest", Toast.LENGTH_LONG).show()
+                                if (pdfFile != null) {
+                                    Toast.makeText(context, "Saved PDF directly to Downloads: ${pdfFile.absolutePath}", Toast.LENGTH_LONG).show()
                                 } else {
-                                    Toast.makeText(context, "Invoice Printed successfully", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "Failed to generate PDF", Toast.LENGTH_SHORT).show()
                                 }
                             } catch (e: Exception) {
                                 e.printStackTrace()
-                                Toast.makeText(context, "Invoice Printed successfully", Toast.LENGTH_SHORT).show()
                             }
                         },
                         modifier = Modifier.weight(1f).height(48.dp),
                         shape = RoundedCornerShape(8.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                     ) {
-                        Icon(imageVector = Icons.Default.Print, contentDescription = null, modifier = Modifier.padding(end = 6.dp))
-                        Text("Print Invoice")
+                        Icon(imageVector = Icons.Default.Download, contentDescription = null, modifier = Modifier.padding(end = 6.dp))
+                        Text("Download PDF")
                     }
 
                     Button(
@@ -421,7 +421,7 @@ fun InvoiceScreen(
                             try {
                                 val javaSdf = java.text.SimpleDateFormat("dd-MM-yyyy HH:mm", java.util.Locale.US)
                                 val dateStr = javaSdf.format(java.util.Date(v.createdAt))
-                                val saveDest = Utils.saveInvoiceToDeviceDownloads(
+                                val pdfFile = PdfUtils.generatePdfInvoice(
                                     context = context,
                                     profile = prof,
                                     voucherNo = v.voucherNo,
@@ -436,14 +436,19 @@ fun InvoiceScreen(
                                     roundOff = v.roundOff,
                                     net = v.netAmount
                                 )
-                                if (saveDest != null) {
-                                    Toast.makeText(context, "Invoice shared as PDF and saved to: $saveDest", Toast.LENGTH_LONG).show()
+                                if (pdfFile != null) {
+                                    val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.provider", pdfFile)
+                                    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                        type = "application/pdf"
+                                        putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                                        addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    }
+                                    context.startActivity(android.content.Intent.createChooser(intent, "Share Invoice PDF"))
                                 } else {
-                                    Toast.makeText(context, "Invoice shared as PDF to client via WhatsApp", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "Failed to generate PDF", Toast.LENGTH_SHORT).show()
                                 }
                             } catch (e: Exception) {
                                 e.printStackTrace()
-                                Toast.makeText(context, "Invoice shared as PDF to client via WhatsApp", Toast.LENGTH_SHORT).show()
                             }
                         },
                         modifier = Modifier.weight(1f).height(48.dp),
