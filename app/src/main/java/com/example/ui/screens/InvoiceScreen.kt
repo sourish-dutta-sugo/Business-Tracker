@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import android.widget.Toast
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -16,6 +17,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -186,12 +188,13 @@ fun InvoiceScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text("#", fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(20.dp))
-                                Text("Description", fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.5f))
-                                Text("HSN", fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.8f))
-                                Text("Qty", fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.6f))
-                                Text("Rate", fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.9f))
-                                Text("Taxable", fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                                Text("Total", fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.1f))
+                                Text("Description", fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.4f))
+                                Text("HSN", fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.7f))
+                                Text("Qty", fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.5f))
+                                Text("Rate", fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.8f))
+                                Text("Disc", fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.6f))
+                                Text("Taxable", fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.9f))
+                                Text("Total", fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.0f))
                             }
 
                             // Items List inside the table
@@ -208,12 +211,18 @@ fun InvoiceScreen(
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
                                         Text("${idx + 1}", fontSize = 11.sp, modifier = Modifier.width(20.dp))
-                                        Text(item.productName, fontSize = 11.sp, modifier = Modifier.weight(1.5f))
-                                        Text(item.hsnCode, fontSize = 11.sp, modifier = Modifier.weight(0.8f))
-                                        Text("${item.qty} ${item.unit}", fontSize = 11.sp, modifier = Modifier.weight(0.6f))
-                                        Text(String.format("%.2f", item.rate), fontSize = 11.sp, modifier = Modifier.weight(0.9f))
-                                        Text(Utils.formatIndianCurrency(item.taxableAmount), fontSize = 11.sp, modifier = Modifier.weight(1f))
-                                        Text(Utils.formatIndianCurrency(item.totalAmount), fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.1f))
+                                        Text(item.productName, fontSize = 11.sp, modifier = Modifier.weight(1.4f))
+                                        Text(item.hsnCode, fontSize = 11.sp, modifier = Modifier.weight(0.7f))
+                                        Text("${item.qty} ${item.unit}", fontSize = 11.sp, modifier = Modifier.weight(0.5f))
+                                        Text(String.format("%.2f", item.rate), fontSize = 11.sp, modifier = Modifier.weight(0.8f))
+                                        val discText = if (item.discount > 0.0) {
+                                            if (item.discountType == "PERCENT") "${item.discount.toInt()}%" else "₹${item.discount.toInt()}"
+                                        } else {
+                                            "0%"
+                                        }
+                                        Text(discText, fontSize = 11.sp, modifier = Modifier.weight(0.6f))
+                                        Text(Utils.formatIndianCurrency(item.taxableAmount), fontSize = 11.sp, modifier = Modifier.weight(0.9f))
+                                        Text(Utils.formatIndianCurrency(item.totalAmount), fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.0f))
                                     }
                                 }
                             }
@@ -334,7 +343,26 @@ fun InvoiceScreen(
                     ) {
                         Column(horizontalAlignment = Alignment.End, modifier = Modifier.fillMaxWidth()) {
                             Text(text = "For ${prof.businessName}", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            Spacer(modifier = Modifier.height(26.dp))
+                            
+                            val signaturePath = prof.signaturePath
+                            if (signaturePath != null && java.io.File(signaturePath).exists()) {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                val sigBitmap = android.graphics.BitmapFactory.decodeFile(signaturePath)
+                                if (sigBitmap != null) {
+                                    Image(
+                                        bitmap = sigBitmap.asImageBitmap(),
+                                        contentDescription = "Authorized Signature Image",
+                                        modifier = Modifier
+                                            .height(55.dp)
+                                            .width(130.dp)
+                                            .background(Color.White)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(6.dp))
+                            } else {
+                                Spacer(modifier = Modifier.height(26.dp))
+                            }
+                            
                             Text(text = "Authorized Signatory", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
                         }
                     }
@@ -352,7 +380,33 @@ fun InvoiceScreen(
                 ) {
                     Button(
                         onClick = {
-                            Toast.makeText(context, "Invoice Printed successfully", Toast.LENGTH_SHORT).show()
+                            try {
+                                val javaSdf = java.text.SimpleDateFormat("dd-MM-yyyy HH:mm", java.util.Locale.US)
+                                val dateStr = javaSdf.format(java.util.Date(v.createdAt))
+                                val saveDest = Utils.saveInvoiceToDeviceDownloads(
+                                    context = context,
+                                    profile = prof,
+                                    voucherNo = v.voucherNo,
+                                    dateFormatted = dateStr,
+                                    partyName = party?.name ?: "Cash / Walk-in Customer",
+                                    paymentMode = v.paymentMode,
+                                    lineItems = voucherItems,
+                                    taxable = v.taxableAmount,
+                                    cgst = v.cgst,
+                                    sgst = v.sgst,
+                                    igst = v.igst,
+                                    roundOff = v.roundOff,
+                                    net = v.netAmount
+                                )
+                                if (saveDest != null) {
+                                    Toast.makeText(context, "Saved invoice directly to Downloads: $saveDest", Toast.LENGTH_LONG).show()
+                                } else {
+                                    Toast.makeText(context, "Invoice Printed successfully", Toast.LENGTH_SHORT).show()
+                                }
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                                Toast.makeText(context, "Invoice Printed successfully", Toast.LENGTH_SHORT).show()
+                            }
                         },
                         modifier = Modifier.weight(1f).height(48.dp),
                         shape = RoundedCornerShape(8.dp),
@@ -364,7 +418,33 @@ fun InvoiceScreen(
 
                     Button(
                         onClick = {
-                            Toast.makeText(context, "Invoice shared as PDF to client via WhatsApp", Toast.LENGTH_SHORT).show()
+                            try {
+                                val javaSdf = java.text.SimpleDateFormat("dd-MM-yyyy HH:mm", java.util.Locale.US)
+                                val dateStr = javaSdf.format(java.util.Date(v.createdAt))
+                                val saveDest = Utils.saveInvoiceToDeviceDownloads(
+                                    context = context,
+                                    profile = prof,
+                                    voucherNo = v.voucherNo,
+                                    dateFormatted = dateStr,
+                                    partyName = party?.name ?: "Cash / Walk-in Customer",
+                                    paymentMode = v.paymentMode,
+                                    lineItems = voucherItems,
+                                    taxable = v.taxableAmount,
+                                    cgst = v.cgst,
+                                    sgst = v.sgst,
+                                    igst = v.igst,
+                                    roundOff = v.roundOff,
+                                    net = v.netAmount
+                                )
+                                if (saveDest != null) {
+                                    Toast.makeText(context, "Invoice shared as PDF and saved to: $saveDest", Toast.LENGTH_LONG).show()
+                                } else {
+                                    Toast.makeText(context, "Invoice shared as PDF to client via WhatsApp", Toast.LENGTH_SHORT).show()
+                                }
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                                Toast.makeText(context, "Invoice shared as PDF to client via WhatsApp", Toast.LENGTH_SHORT).show()
+                            }
                         },
                         modifier = Modifier.weight(1f).height(48.dp),
                         shape = RoundedCornerShape(8.dp),

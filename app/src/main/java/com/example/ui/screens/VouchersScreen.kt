@@ -936,7 +936,8 @@ fun NewVoucherScreen(
                                             )
                                             DropdownMenu(
                                                 expanded = unitMenuExp,
-                                                onDismissRequest = { unitMenuExp = false }
+                                                onDismissRequest = { unitMenuExp = false },
+                                                modifier = Modifier.background(Color.White)
                                             ) {
                                                 listOf("PCS", "KG", "GM", "MG", "LTR", "ML", "BOX", "BAG", "NOS", "MTR").forEach { u ->
                                                     DropdownMenuItem(
@@ -1821,7 +1822,8 @@ fun NewVoucherScreen(
                             )
                             DropdownMenu(
                                 expanded = unitExpanded,
-                                onDismissRequest = { unitExpanded = false }
+                                onDismissRequest = { unitExpanded = false },
+                                modifier = Modifier.background(Color.White)
                             ) {
                                 units.forEach { item ->
                                     DropdownMenuItem(
@@ -1852,7 +1854,8 @@ fun NewVoucherScreen(
                                 )
                                 DropdownMenu(
                                     expanded = gstExpanded,
-                                    onDismissRequest = { gstExpanded = false }
+                                    onDismissRequest = { gstExpanded = false },
+                                    modifier = Modifier.background(Color.White)
                                 ) {
                                     gstRates.forEach { rate ->
                                         DropdownMenuItem(
