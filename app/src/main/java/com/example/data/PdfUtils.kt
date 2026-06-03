@@ -70,11 +70,13 @@ object PdfUtils {
             canvas.drawLine(50f, yPos, 545f, yPos, paint)
             yPos += 15f
 
+            val hasDisc = lineItems.any { it.discount > 0.0 }
+            
             paint.isFakeBoldText = true
             canvas.drawText("Item Name", 50f, yPos, paint)
             canvas.drawText("Qty", 280f, yPos, paint)
             canvas.drawText("Rate", 330f, yPos, paint)
-            canvas.drawText("Disc", 400f, yPos, paint)
+            if (hasDisc) canvas.drawText("Disc", 400f, yPos, paint)
             canvas.drawText("Total", 480f, yPos, paint)
             paint.isFakeBoldText = false
             yPos += 10f
@@ -86,8 +88,11 @@ object PdfUtils {
                 canvas.drawText(displayName, 50f, yPos, paint)
                 canvas.drawText("${item.qty}", 280f, yPos, paint)
                 canvas.drawText(String.format("%.2f", item.rate), 330f, yPos, paint)
-                val discStr = if (item.discount > 0.0) "${item.discount.toInt()}%" else "0%"
-                canvas.drawText(discStr, 400f, yPos, paint)
+                
+                if (hasDisc) {
+                    val discStr = if (item.discount > 0.0) "${item.discount.toInt()}%" else "0%"
+                    canvas.drawText(discStr, 400f, yPos, paint)
+                }
                 canvas.drawText(String.format("%.2f", item.totalAmount), 480f, yPos, paint)
                 yPos += 20f
 
@@ -106,19 +111,16 @@ object PdfUtils {
             canvas.drawText(String.format("%.2f", taxable), 480f, yPos, paint)
             yPos += 20f
             
-            if (cgst > 0) {
-                canvas.drawText("CGST:", 350f, yPos, paint)
-                canvas.drawText(String.format("%.2f", cgst), 480f, yPos, paint)
-                yPos += 20f
-            }
-            if (sgst > 0) {
-                canvas.drawText("SGST:", 350f, yPos, paint)
-                canvas.drawText(String.format("%.2f", sgst), 480f, yPos, paint)
-                yPos += 20f
-            }
             if (igst > 0) {
                 canvas.drawText("IGST:", 350f, yPos, paint)
                 canvas.drawText(String.format("%.2f", igst), 480f, yPos, paint)
+                yPos += 20f
+            } else {
+                canvas.drawText("CGST:", 350f, yPos, paint)
+                canvas.drawText(String.format("%.2f", cgst), 480f, yPos, paint)
+                yPos += 20f
+                canvas.drawText("SGST:", 350f, yPos, paint)
+                canvas.drawText(String.format("%.2f", sgst), 480f, yPos, paint)
                 yPos += 20f
             }
             
