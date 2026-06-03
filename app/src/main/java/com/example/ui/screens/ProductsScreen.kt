@@ -236,12 +236,12 @@ fun AddProductForm(
                 DropdownMenu(
                     expanded = unitDropdownExpanded,
                     onDismissRequest = { unitDropdownExpanded = false },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().background(Color.White)
                 ) {
                     val units = listOf("PCS", "KG", "GM", "MG", "LTR", "ML", "BOX", "BAG", "NOS", "MTR")
                     units.forEach { u ->
                         DropdownMenuItem(
-                            text = { Text(u) },
+                            text = { Text(u, color = Colors.textPrimary) },
                             onClick = {
                                 selectedUnit = u
                                 unitDropdownExpanded = false
@@ -293,12 +293,12 @@ fun AddProductForm(
                 DropdownMenu(
                     expanded = gstDropdownExpanded,
                     onDismissRequest = { gstDropdownExpanded = false },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().background(Color.White)
                 ) {
                     val rates = listOf(0.0, 5.0, 12.0, 18.0, 28.0)
                     rates.forEach { r ->
                         DropdownMenuItem(
-                            text = { Text("$r%") },
+                            text = { Text("$r%", color = Colors.textPrimary) },
                             onClick = {
                                 gstRate = r
                                 gstDropdownExpanded = false
