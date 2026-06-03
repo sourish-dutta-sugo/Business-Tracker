@@ -259,17 +259,18 @@ fun VouchersScreen(
 @Composable
 fun NewVoucherScreen(
     viewModel: AppViewModel,
+    voucherId: String? = null,
     onNavigateBack: () -> Unit
 ) {
     val profile by viewModel.profile.collectAsState()
     val parties by viewModel.parties.collectAsState()
     val products by viewModel.products.collectAsState()
-
-    val coroutineScope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
 
-    var step by remember { mutableStateOf(1) } // 1: Type selection, 2: Form & Line items
-
+    val coroutineScope = rememberCoroutineScope()
+    
+    var step by remember { mutableStateOf(voucherId?.let { 2 } ?: 1) } // 1: Type selection, 2: Form & Line items
+    
     // Voucher details
     var selectedType by remember { mutableStateOf("SALE") }
     var voucherNo by remember { mutableStateOf("") }
@@ -277,6 +278,30 @@ fun NewVoucherScreen(
     var selectedParty by remember { mutableStateOf<Party?>(null) }
     var paymentMode by remember { mutableStateOf("CASH") }
     var narration by remember { mutableStateOf("") }
+    
+    // Line items
+    val lineItems = remember { mutableStateListOf<VoucherItem>() }
+    
+    // Load existing data if editing
+    LaunchedEffect(voucherId) {
+        if (!voucherId.isNullOrBlank()) {
+            val voucher = viewModel.getVoucherById(voucherId)
+            if (voucher != null) {
+                selectedType = voucher.type
+                voucherNo = voucher.voucherNo
+                voucherDate = voucher.date
+                selectedParty = parties.find { it.id == voucher.partyId }
+                paymentMode = voucher.paymentMode
+                narration = voucher.narration ?: ""
+                
+                val items = viewModel.getItemsForVoucher(voucherId).firstOrNull()
+                if (items != null) {
+                    lineItems.clear()
+                    lineItems.addAll(items)
+                }
+            }
+        }
+    }
 
     // GST control checking
     val hasGst = remember(profile) { !profile?.gstin.isNullOrBlank() }
@@ -288,9 +313,6 @@ fun NewVoucherScreen(
     var chequeNo by remember { mutableStateOf("") }
     var chequeDate by remember { mutableStateOf(System.currentTimeMillis()) }
     var bankName by remember { mutableStateOf("") }
-
-    // Line items
-    val lineItems = remember { mutableStateListOf<VoucherItem>() }
 
     // Enhanced transaction variables
     var uploadedInvoiceUri by remember { mutableStateOf<String?>(null) }
@@ -423,7 +445,9 @@ fun NewVoucherScreen(
                     "RECEIPT" to "Receive outstanding/cash from party",
                     "PAYMENT" to "Record outward cash/bank payment directly",
                     "SALE_RETURN" to "Reverse previous sales (Credit Note)",
-                    "PURCHASE_RETURN" to "Reverse previous purchases (Debit Note)"
+                    "PURCHASE_RETURN" to "Reverse previous purchases (Debit Note)",
+                    "BILLS_RECEIVABLE" to "Record bills receivable from customers",
+                    "BILLS_PAYABLE" to "Record bills payable to suppliers"
                 )
 
                 types.forEach { (type, description) ->

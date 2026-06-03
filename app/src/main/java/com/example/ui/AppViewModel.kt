@@ -33,6 +33,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     // Current setup status
     val isSetupCompleted = MutableStateFlow(false)
+    val financialYear = MutableStateFlow("2026-27")
 
     init {
         var tempRepo: AppRepository? = null
