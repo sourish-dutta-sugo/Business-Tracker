@@ -39,6 +39,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.geometry.Offset
@@ -263,6 +264,7 @@ fun NewVoucherScreen(
     val products by viewModel.products.collectAsState()
 
     val coroutineScope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     var step by remember { mutableStateOf(1) } // 1: Type selection, 2: Form & Line items
 
@@ -327,7 +329,12 @@ fun NewVoucherScreen(
     }
 
     val saveTheVoucher: (Boolean) -> Unit = { shouldPrint ->
-        if (lineItems.isNotEmpty() || selectedType == "RECEIPT" || selectedType == "PAYMENT") {
+        val isBill = (selectedType != "RECEIPT" && selectedType != "PAYMENT")
+        if (isBill && lineItems.isEmpty()) {
+            android.widget.Toast.makeText(context, "Cannot save/print: Add at least 1 item to buy!", android.widget.Toast.LENGTH_LONG).show()
+        } else if (isBill && lineItems.any { it.qty <= 0.0 }) {
+            android.widget.Toast.makeText(context, "Cannot save/print: All products must have positive quantity values!", android.widget.Toast.LENGTH_LONG).show()
+        } else {
             val finalId = UUID.randomUUID().toString()
             val voucherObj = Voucher(
                 id = finalId,
@@ -884,7 +891,7 @@ fun NewVoucherScreen(
                                         }
                                     }
 
-                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                         RetailTextField(
                                             value = if (item.qty == 0.0) "" else item.qty.toString(),
                                             onValueChange = { qtyVal ->
@@ -904,10 +911,44 @@ fun NewVoucherScreen(
                                                 )
                                             },
                                             label = "Qty",
-                                            modifier = Modifier.weight(1f),
+                                            modifier = Modifier.weight(1.1f),
                                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                             singleLine = true
                                         )
+
+                                        Box(modifier = Modifier.weight(1.1f)) {
+                                            var unitMenuExp by remember { mutableStateOf(false) }
+                                            OutlinedTextField(
+                                                value = item.unit,
+                                                onValueChange = {},
+                                                readOnly = true,
+                                                label = { Text("Unit", fontSize = 9.sp) },
+                                                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Colors.primary),
+                                                modifier = Modifier.fillMaxWidth().clickable { unitMenuExp = true },
+                                                singleLine = true,
+                                                trailingIcon = {
+                                                    Icon(
+                                                        imageVector = Icons.Default.KeyboardArrowDown,
+                                                        contentDescription = null,
+                                                        modifier = Modifier.size(14.dp).clickable { unitMenuExp = true }
+                                                    )
+                                                }
+                                            )
+                                            DropdownMenu(
+                                                expanded = unitMenuExp,
+                                                onDismissRequest = { unitMenuExp = false }
+                                            ) {
+                                                listOf("PCS", "KG", "GM", "MG", "LTR", "ML", "BOX", "BAG", "NOS", "MTR").forEach { u ->
+                                                    DropdownMenuItem(
+                                                        text = { Text(u, fontSize = 11.sp, color = Colors.textPrimary) },
+                                                        onClick = {
+                                                            unitMenuExp = false
+                                                            lineItems[index] = item.copy(unit = u)
+                                                        }
+                                                    )
+                                                }
+                                            }
+                                        }
 
                                         RetailTextField(
                                             value = if (item.rate == 0.0) "" else item.rate.toString(),
@@ -928,7 +969,7 @@ fun NewVoucherScreen(
                                                 )
                                             },
                                             label = "Rate (₹)",
-                                            modifier = Modifier.weight(1.2f),
+                                            modifier = Modifier.weight(1.3f),
                                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                             singleLine = true
                                         )
@@ -951,8 +992,8 @@ fun NewVoucherScreen(
                                                     totalAmount = tax + dynamicGst
                                                 )
                                             },
-                                            label = "Disc",
-                                            modifier = Modifier.weight(1f),
+                                            label = "Disc (%)",
+                                            modifier = Modifier.weight(1.1f),
                                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                             singleLine = true
                                         )
@@ -1350,16 +1391,6 @@ fun NewVoucherScreen(
                             .padding(16.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        // Business logo on printed ticket!
-                        Image(
-                            painter = painterResource(id = com.example.R.drawable.business_logo),
-                            contentDescription = "Receipt Logo",
-                            modifier = Modifier
-                                .size(50.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-
                         Text(
                             text = profile?.businessName?.ifBlank { "ZeroBook Ltd" } ?: "ZeroBook Ltd",
                             fontWeight = FontWeight.Bold,
@@ -1547,6 +1578,23 @@ fun NewVoucherScreen(
                             fontSize = 8.sp,
                             color = Color.Gray
                         )
+
+                        val signaturePath = profile?.signaturePath
+                        if (signaturePath != null && java.io.File(signaturePath).exists()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("Authorized Signature:", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.Black)
+                            val sigBitmap = android.graphics.BitmapFactory.decodeFile(signaturePath)
+                            if (sigBitmap != null) {
+                                Image(
+                                    bitmap = sigBitmap.asImageBitmap(),
+                                    contentDescription = "Signature Trace Printout",
+                                    modifier = Modifier
+                                        .height(45.dp)
+                                        .width(110.dp)
+                                        .background(Color.White)
+                                )
+                            }
+                        }
                     }
                 }
             },
@@ -1554,6 +1602,32 @@ fun NewVoucherScreen(
                 Button(
                     onClick = {
                         showPrintReceiptDialog = false
+                        try {
+                            val dateStr = sdf.format(Date(voucherDate))
+                            val itemsList = lineItems.toList()
+                            val saveDest = Utils.saveInvoiceToDeviceDownloads(
+                                context = context,
+                                profile = profile,
+                                voucherNo = voucherNo,
+                                dateFormatted = dateStr,
+                                partyName = selectedParty?.name ?: "Cash Customer",
+                                paymentMode = paymentMode,
+                                lineItems = itemsList,
+                                taxable = taxableAmount.value,
+                                cgst = cgst.value,
+                                sgst = sgst.value,
+                                igst = igst.value,
+                                roundOff = roundOff.value,
+                                net = netAmount.value
+                            )
+                            if (saveDest != null) {
+                                android.widget.Toast.makeText(context, "Saved invoice directly to Local Storage Downloads: $saveDest", android.widget.Toast.LENGTH_LONG).show()
+                            } else {
+                                android.widget.Toast.makeText(context, "Mock terminal printer job queued successfully.", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
                         onNavigateBack() // Go back as print job sent to system spooler successfully
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Colors.success)
@@ -1707,7 +1781,7 @@ fun NewVoucherScreen(
         var unitExpanded by remember { mutableStateOf(false) }
         var gstExpanded by remember { mutableStateOf(false) }
 
-        val units = listOf("PCS", "KG", "LTR", "MTR", "BOX", "BAG", "NOS")
+        val units = listOf("PCS", "KG", "GM", "MG", "LTR", "ML", "BOX", "BAG", "NOS", "MTR")
         val gstRates = listOf("0.0", "5.0", "12.0", "18.0", "28.0")
 
         AlertDialog(

@@ -22,12 +22,19 @@ import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.ShoppingBag
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import android.graphics.Bitmap
+import java.io.File
+import java.io.FileOutputStream
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -169,6 +176,13 @@ fun SettingsScreen(
         var stateDropdownExpanded by remember { mutableStateOf(false) }
         val formScroll = rememberScrollState()
 
+        // Signature Pad drawing states
+        val signaturePaths = remember { mutableStateListOf<List<androidx.compose.ui.geometry.Offset>>() }
+        var signatureCurrentPath by remember { mutableStateOf<List<androidx.compose.ui.geometry.Offset>>(emptyList()) }
+        var canvasWidth by remember { mutableStateOf(400) }
+        var canvasHeight by remember { mutableStateOf(160) }
+        var isSignatureSaved by remember { mutableStateOf(profile.signaturePath != null && java.io.File(profile.signaturePath).exists()) }
+
         Scaffold(
             topBar = {
                 TopAppBar(
@@ -297,6 +311,149 @@ fun SettingsScreen(
                     label = "Bank IFSC Code *"
                 )
 
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                Text("AUTHORIZED SIGNING AUTHORITY SIGNATURE", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Colors.textSecondary)
+                Text("Scribble your official signature. This will automatically print on your receipts & invoices.", fontSize = 11.sp, color = Colors.textSecondary)
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(140.dp)
+                        .background(Color(0xFFFFFBEB))
+                        .border(1.dp, Colors.border, RoundedCornerShape(8.dp))
+                        .onGloballyPositioned { coordinates ->
+                            canvasWidth = coordinates.size.width
+                            canvasHeight = coordinates.size.height
+                        }
+                ) {
+                    androidx.compose.foundation.Canvas(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .pointerInput(Unit) {
+                                detectDragGestures(
+                                    onDragStart = { offset ->
+                                        signatureCurrentPath = listOf(offset)
+                                    },
+                                    onDrag = { change, _ ->
+                                        change.consume()
+                                        signatureCurrentPath = signatureCurrentPath + change.position
+                                    },
+                                    onDragEnd = {
+                                        if (signatureCurrentPath.isNotEmpty()) {
+                                            signaturePaths.add(signatureCurrentPath)
+                                            signatureCurrentPath = emptyList()
+                                        }
+                                    }
+                                )
+                            }
+                    ) {
+                        for (line in signaturePaths) {
+                            if (line.size > 1) {
+                                for (i in 0 until line.size - 1) {
+                                    drawLine(
+                                        color = Color(0xFF1E3A8A),
+                                        start = line[i],
+                                        end = line[i + 1],
+                                        strokeWidth = 5f
+                                    )
+                                }
+                            }
+                        }
+                        val activeLine = signatureCurrentPath
+                        if (activeLine.size > 1) {
+                            for (i in 0 until activeLine.size - 1) {
+                                drawLine(
+                                    color = Color(0xFF1E3A8A),
+                                    start = activeLine[i],
+                                    end = activeLine[i + 1],
+                                    strokeWidth = 5f
+                                )
+                            }
+                        }
+                    }
+
+                    if (signaturePaths.isEmpty() && signatureCurrentPath.isEmpty() && !isSignatureSaved) {
+                        Text(
+                            text = "Sign Here inside this yellow area",
+                            color = Color.LightGray,
+                            fontSize = 13.sp,
+                            modifier = Modifier.align(Alignment.Center)
+                        )
+                    } else if (isSignatureSaved && signaturePaths.isEmpty()) {
+                        Text(
+                            text = "✏️ Digital Signature Registered\n(Draw here to replace)",
+                            color = Colors.success,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.align(Alignment.Center)
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            signaturePaths.clear()
+                            signatureCurrentPath = emptyList()
+                            isSignatureSaved = false
+                        },
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Clear Trace", fontSize = 11.sp, color = Colors.danger)
+                    }
+
+                    Button(
+                        onClick = {
+                            if (signaturePaths.isEmpty()) {
+                                Toast.makeText(context, "Trace some scribble structure first", Toast.LENGTH_SHORT).show()
+                            } else {
+                                try {
+                                    val b = Bitmap.createBitmap(canvasWidth, canvasHeight, Bitmap.Config.ARGB_8888)
+                                    val c = android.graphics.Canvas(b)
+                                    c.drawColor(android.graphics.Color.WHITE)
+                                    val paint = android.graphics.Paint().apply {
+                                        color = android.graphics.Color.parseColor("#1D4ED8")
+                                        strokeWidth = 6f
+                                        style = android.graphics.Paint.Style.STROKE
+                                        strokeCap = android.graphics.Paint.Cap.ROUND
+                                        strokeJoin = android.graphics.Paint.Join.ROUND
+                                        isAntiAlias = true
+                                    }
+                                    for (line in signaturePaths) {
+                                        if (line.size > 1) {
+                                            val path = android.graphics.Path()
+                                            path.moveTo(line[0].x, line[0].y)
+                                            for (i in 1 until line.size) {
+                                                path.lineTo(line[i].x, line[i].y)
+                                            }
+                                            c.drawPath(path, paint)
+                                        }
+                                    }
+                                    val sigFile = File(context.filesDir, "business_signature.png")
+                                    val fos = FileOutputStream(sigFile)
+                                    b.compress(Bitmap.CompressFormat.PNG, 100, fos)
+                                    fos.close()
+                                    isSignatureSaved = true
+                                    Toast.makeText(context, "Scribble locked successfully!", Toast.LENGTH_SHORT).show()
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                    Toast.makeText(context, "Compiling trace failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        },
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier.weight(1.5f),
+                        colors = ButtonDefaults.buttonColors(containerColor = Colors.primary)
+                    ) {
+                        Text("Record Drawing", fontSize = 11.sp, color = Color.White)
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(8.dp))
                 Button(
                     onClick = {
@@ -310,7 +467,8 @@ fun SettingsScreen(
                                 pin = pinCode,
                                 state = selectedStateInfo.first, stateCode = selectedStateInfo.second,
                                 phone = phone, email = email, gstin = gstin, pan = pan,
-                                bankName = bankName, accountNo = accountNo, ifsc = ifsc
+                                bankName = bankName, accountNo = accountNo, ifsc = ifsc,
+                                signaturePath = if (isSignatureSaved) File(context.filesDir, "business_signature.png").absolutePath else null
                             )
                             viewModel.updateProfile(nextProfile) {
                                 Toast.makeText(context, "Business Profile successfully updated!", Toast.LENGTH_SHORT).show()

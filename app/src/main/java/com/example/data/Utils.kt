@@ -133,4 +133,70 @@ object Utils {
 
         return "${words.trim()} Rupees Only"
     }
+
+    fun saveInvoiceToDeviceDownloads(
+        context: android.content.Context,
+        profile: BusinessProfile?,
+        voucherNo: String,
+        dateFormatted: String,
+        partyName: String,
+        paymentMode: String,
+        lineItems: List<VoucherItem>,
+        taxable: Double,
+        cgst: Double,
+        sgst: Double,
+        igst: Double,
+        roundOff: Double,
+        net: Double
+    ): String? {
+        try {
+            val fileName = "ZeroBook_Invoice_${voucherNo.replace("/", "_")}.txt"
+            val dir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS) ?: context.filesDir
+            if (!dir.exists()) dir.mkdirs()
+            val file = java.io.File(dir, fileName)
+            
+            val writer = java.io.FileWriter(file)
+            writer.write("=============================================\n")
+            val title = if (profile != null && !profile.gstin.isNullOrBlank()) "TAX INVOICE" else "INVOICE"
+            writer.write("                 $title             \n")
+            writer.write("=============================================\n")
+            writer.write("BUSINESS NAME: ${profile?.businessName?.ifBlank { "ZeroBook Ltd" } ?: "ZeroBook Ltd"}\n")
+            writer.write("ADDRESS: ${profile?.address ?: "Market Road"}, ${profile?.city ?: "New Delhi"}\n")
+            writer.write("GSTIN: ${if (profile?.gstin.isNullOrBlank()) "NA" else profile?.gstin}\n")
+            writer.write("PAN: ${if (profile?.pan.isNullOrBlank()) "NA" else profile?.pan}\n")
+            writer.write("PHONE: ${profile?.phone ?: "NA"} | EMAIL: ${profile?.email ?: "NA"}\n")
+            writer.write("=============================================\n")
+            writer.write("INVOICE NO: $voucherNo\n")
+            writer.write("DATE TIME:  $dateFormatted\n")
+            writer.write("PARTY NAME: $partyName\n")
+            writer.write("PAYMENT:    $paymentMode\n")
+            writer.write("=============================================\n")
+            writer.write(String.format("%-20s %5s %10s %10s\n", "ITEM NAME", "QTY", "RATE", "TOTAL"))
+            writer.write("---------------------------------------------\n")
+            for (item in lineItems) {
+                val displayName = if (item.productName.length > 20) item.productName.substring(0, 17) + "..." else item.productName
+                writer.write(String.format("%-20s %5.1f %10.2f %10.2f\n", 
+                    displayName, item.qty, item.rate, item.totalAmount))
+            }
+            writer.write("=============================================\n")
+            writer.write(String.format("%-30s %12.2f\n", "TAXABLE AMOUNT:", taxable))
+            if (cgst > 0) writer.write(String.format("%-30s %12.2f\n", "CGST:", cgst))
+            if (sgst > 0) writer.write(String.format("%-30s %12.2f\n", "SGST:", sgst))
+            if (igst > 0) writer.write(String.format("%-30s %12.2f\n", "IGST:", igst))
+            if (roundOff != 0.0) writer.write(String.format("%-30s %12.2f\n", "ROUND OFF:", roundOff))
+            writer.write("---------------------------------------------\n")
+            writer.write(String.format("%-30s %12.2f\n", "NET AMOUNT PAYABLE:", net))
+            writer.write("=============================================\n")
+            writer.write("Thank you for doing business with us!\n")
+            if (profile?.ownerName != null) {
+                writer.write("\n\nFor ${profile.businessName}\n\n\n\n[Digitally Signed by ${profile.ownerName}]\n")
+                writer.write("Authorized Signatory\n")
+            }
+            writer.close()
+            return file.absolutePath
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return null
+        }
+    }
 }

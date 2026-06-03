@@ -47,7 +47,7 @@ fun InvoiceScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Tax Invoice", fontWeight = FontWeight.Bold) },
+                title = { Text(if (profile?.gstin.isNullOrBlank()) "Invoice" else "Tax Invoice", fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back")
@@ -95,7 +95,7 @@ fun InvoiceScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "TAX INVOICE",
+                                    text = if (prof.gstin.isBlank()) "INVOICE" else "TAX INVOICE",
                                     fontSize = 18.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.primary
@@ -109,7 +109,9 @@ fun InvoiceScreen(
                             }
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(text = "${prof.address}, ${prof.city}, ${prof.state} - ${prof.pin}", fontSize = 11.sp, color = Color.Gray)
-                            Text(text = "GSTIN: ${prof.gstin} | PAN: ${prof.pan}", fontSize = 11.sp, color = Color.Gray)
+                            val profGst = if (prof.gstin.isBlank()) "NA" else prof.gstin
+                            val profPan = if (prof.pan.isBlank()) "NA" else prof.pan
+                            Text(text = "GSTIN: $profGst | PAN: $profPan", fontSize = 11.sp, color = Color.Gray)
                             Text(text = "Email: ${prof.email} | Phone: ${prof.phone}", fontSize = 11.sp, color = Color.Gray)
                         }
                     }
@@ -133,7 +135,8 @@ fun InvoiceScreen(
                                     Text(text = party.name, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1A1A1A))
                                     Text(text = party.address, fontSize = 11.sp, color = Color.Gray)
                                     Text(text = "${party.city}, ${party.state}", fontSize = 11.sp, color = Color.Gray)
-                                    Text(text = "GSTIN: ${party.gstin ?: "N/A"}", fontSize = 11.sp, color = Color.Gray)
+                                    val partyGst = if (party.gstin.isNullOrBlank()) "NA" else party.gstin
+                                    Text(text = "GSTIN: $partyGst", fontSize = 11.sp, color = Color.Gray)
                                 } else {
                                     Text(text = "Cash / Walk-in Customer", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1A1A1A))
                                     Text(text = "Consumer (B2C Transaction)", fontSize = 11.sp, color = Color.Gray)

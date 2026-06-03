@@ -238,7 +238,7 @@ fun AddProductForm(
                     onDismissRequest = { unitDropdownExpanded = false },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    val units = listOf("PCS", "KG", "LTR", "MTR", "BOX", "BAG", "NOS")
+                    val units = listOf("PCS", "KG", "GM", "MG", "LTR", "ML", "BOX", "BAG", "NOS", "MTR")
                     units.forEach { u ->
                         DropdownMenuItem(
                             text = { Text(u) },
