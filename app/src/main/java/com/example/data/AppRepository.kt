@@ -515,6 +515,60 @@ class AppRepository(private val db: AppDatabase) {
                         }
                     }
                 }
+
+                "BILLS_RECEIVABLE" -> {
+                    ledgerList.add(
+                        LedgerEntry(
+                            id = UUID.randomUUID().toString(),
+                            accountHead = "Bills Receivable Account",
+                            voucherId = voucher.id,
+                            date = voucher.date,
+                            debit = voucher.netAmount,
+                            credit = 0.0,
+                            narration = "Bills Receivable entry",
+                            createdAt = System.currentTimeMillis()
+                        )
+                    )
+                    ledgerList.add(
+                        LedgerEntry(
+                            id = UUID.randomUUID().toString(),
+                            accountHead = "Party: $partyDesc",
+                            voucherId = voucher.id,
+                            date = voucher.date,
+                            debit = 0.0,
+                            credit = voucher.netAmount,
+                            narration = "Bills Receivable from $partyDesc",
+                            createdAt = System.currentTimeMillis()
+                        )
+                    )
+                }
+
+                "BILLS_PAYABLE" -> {
+                    ledgerList.add(
+                        LedgerEntry(
+                            id = UUID.randomUUID().toString(),
+                            accountHead = "Party: $partyDesc",
+                            voucherId = voucher.id,
+                            date = voucher.date,
+                            debit = voucher.netAmount,
+                            credit = 0.0,
+                            narration = "Bills Payable to $partyDesc",
+                            createdAt = System.currentTimeMillis()
+                        )
+                    )
+                    ledgerList.add(
+                        LedgerEntry(
+                            id = UUID.randomUUID().toString(),
+                            accountHead = "Bills Payable Account",
+                            voucherId = voucher.id,
+                            date = voucher.date,
+                            debit = 0.0,
+                            credit = voucher.netAmount,
+                            narration = "Bills Payable entry",
+                            createdAt = System.currentTimeMillis()
+                        )
+                    )
+                }
             }
 
             if (ledgerList.isNotEmpty()) {

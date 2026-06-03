@@ -39,11 +39,12 @@ sealed class Screen {
     object Vouchers : Screen()
     object Parties : Screen()
     object Settings : Screen()
+    object Reports : Screen()
     
     // Sub-screens
     object Products : Screen()
     object BankCash : Screen()
-    object NewVoucher : Screen()
+    data class NewVoucher(val voucherId: String? = null) : Screen()
     data class Invoice(val voucherId: String) : Screen()
     data class PartyDetail(val partyId: String) : Screen()
 }
@@ -283,11 +284,11 @@ fun MainAppEntry(viewModel: AppViewModel) {
                             viewModel = viewModel,
                             onQuickAction = { action ->
                                 when (action) {
-                                    "SALE" -> navigateTo(Screen.NewVoucher)
-                                    "PURCHASE" -> navigateTo(Screen.NewVoucher)
+                                    "SALE" -> navigateTo(Screen.NewVoucher())
+                                    "PURCHASE" -> navigateTo(Screen.NewVoucher())
                                     "RECEIPT" -> navigateTo(Screen.BankCash)
                                     "PAYMENT" -> navigateTo(Screen.BankCash)
-                                    "REPORTS" -> navigateTo(Screen.Settings)
+                                    "REPORTS" -> navigateTo(Screen.Reports)
                                     "PARTY" -> {
                                         backstack.clear()
                                         navigateTo(Screen.Parties)
@@ -300,7 +301,7 @@ fun MainAppEntry(viewModel: AppViewModel) {
                     is Screen.Vouchers -> {
                         VouchersScreen(
                             viewModel = viewModel,
-                            navigateToNewVoucher = { navigateTo(Screen.NewVoucher) },
+                            navigateToNewVoucher = { navigateTo(Screen.NewVoucher()) },
                             navigateToInvoice = { id -> navigateTo(Screen.Invoice(id)) }
                         )
                     }
@@ -320,6 +321,13 @@ fun MainAppEntry(viewModel: AppViewModel) {
                         )
                     }
 
+                    is Screen.Reports -> {
+                        ReportsScreen(
+                            viewModel = viewModel,
+                            onNavigateBack = { navigateBack() }
+                        )
+                    }
+
                     is Screen.Products -> {
                         ProductsScreen(
                             viewModel = viewModel,
@@ -335,8 +343,10 @@ fun MainAppEntry(viewModel: AppViewModel) {
                     }
 
                     is Screen.NewVoucher -> {
+                        val vId = (currentScreen as Screen.NewVoucher).voucherId
                         NewVoucherScreen(
                             viewModel = viewModel,
+                            voucherId = vId,
                             onNavigateBack = { navigateBack() }
                         )
                     }
@@ -346,7 +356,8 @@ fun MainAppEntry(viewModel: AppViewModel) {
                         InvoiceScreen(
                             viewModel = viewModel,
                             voucherId = vId,
-                            onNavigateBack = { navigateBack() }
+                            onNavigateBack = { navigateBack() },
+                            onEditVoucher = { id -> navigateTo(Screen.NewVoucher(id)) }
                         )
                     }
 

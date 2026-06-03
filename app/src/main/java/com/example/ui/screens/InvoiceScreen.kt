@@ -11,6 +11,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
@@ -31,7 +32,8 @@ import com.example.ui.AppViewModel
 fun InvoiceScreen(
     viewModel: AppViewModel,
     voucherId: String,
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    onEditVoucher: (String) -> Unit
 ) {
     val context = LocalContext.current
     val profile by viewModel.profile.collectAsState()
@@ -94,6 +96,11 @@ fun InvoiceScreen(
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { onEditVoucher(voucherId) }) {
+                        Icon(imageVector = Icons.Default.Edit, contentDescription = "Edit Voucher")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.White)
@@ -417,7 +424,7 @@ fun InvoiceScreen(
                         .fillMaxWidth()
                         .background(Color(0xFFFAF9F9))
                         .padding(16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Button(
                         onClick = {
@@ -427,10 +434,68 @@ fun InvoiceScreen(
                         },
                         modifier = Modifier.weight(1f).height(48.dp),
                         shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        contentPadding = PaddingValues(horizontal = 4.dp)
                     ) {
-                        Icon(imageVector = Icons.Default.Download, contentDescription = null, modifier = Modifier.padding(end = 6.dp))
-                        Text("Download PDF")
+                        Icon(imageVector = Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp).padding(end = 4.dp))
+                        Text("Save PDF", fontSize = 11.sp)
+                    }
+
+                    Button(
+                        onClick = {
+                            try {
+                                val javaSdf = java.text.SimpleDateFormat("dd-MM-yyyy HH:mm", java.util.Locale.US)
+                                val dateStr = javaSdf.format(java.util.Date(v.createdAt))
+                                val pdfFile = PdfUtils.generatePdfInvoice(
+                                    context = context,
+                                    profile = prof,
+                                    voucherNo = v.voucherNo,
+                                    dateFormatted = dateStr,
+                                    partyName = party?.name ?: "Cash / Walk-in Customer",
+                                    paymentMode = v.paymentMode,
+                                    lineItems = voucherItems,
+                                    taxable = v.taxableAmount,
+                                    cgst = v.cgst,
+                                    sgst = v.sgst,
+                                    igst = v.igst,
+                                    roundOff = v.roundOff,
+                                    net = v.netAmount
+                                )
+                                if (pdfFile != null) {
+                                    val printManager = context.getSystemService(android.content.Context.PRINT_SERVICE) as android.print.PrintManager
+                                    val printAdapter = object : android.print.PrintDocumentAdapter() {
+                                        override fun onWrite(pages: Array<out android.print.PageRange>?, destination: android.os.ParcelFileDescriptor?, cancellationSignal: android.os.CancellationSignal?, callback: WriteResultCallback?) {
+                                            java.io.FileInputStream(pdfFile).use { input ->
+                                                java.io.FileOutputStream(destination?.fileDescriptor).use { output ->
+                                                    input.copyTo(output)
+                                                }
+                                            }
+                                            callback?.onWriteFinished(arrayOf(android.print.PageRange.ALL_PAGES))
+                                        }
+                                        override fun onLayout(oldAttributes: android.print.PrintAttributes?, newAttributes: android.print.PrintAttributes?, cancellationSignal: android.os.CancellationSignal?, callback: LayoutResultCallback?, extras: android.os.Bundle?) {
+                                            if (cancellationSignal?.isCanceled == true) {
+                                                callback?.onLayoutCancelled()
+                                                return
+                                            }
+                                            val info = android.print.PrintDocumentInfo.Builder("invoice.pdf")
+                                                .setContentType(android.print.PrintDocumentInfo.CONTENT_TYPE_DOCUMENT)
+                                                .build()
+                                            callback?.onLayoutFinished(info, true)
+                                        }
+                                    }
+                                    printManager.print("Invoice_${v.voucherNo}", printAdapter, android.print.PrintAttributes.Builder().build())
+                                }
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                        },
+                        modifier = Modifier.weight(1f).height(48.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6C757D)),
+                        contentPadding = PaddingValues(horizontal = 4.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.Print, contentDescription = null, modifier = Modifier.size(16.dp).padding(end = 4.dp))
+                        Text("Print", fontSize = 11.sp)
                     }
 
                     Button(
@@ -470,10 +535,11 @@ fun InvoiceScreen(
                         },
                         modifier = Modifier.weight(1f).height(48.dp),
                         shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF28A745))
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF28A745)),
+                        contentPadding = PaddingValues(horizontal = 4.dp)
                     ) {
-                        Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.padding(end = 6.dp))
-                        Text("Share Invoice")
+                        Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp).padding(end = 4.dp))
+                        Text("Share", fontSize = 11.sp)
                     }
                 }
             }

@@ -15,10 +15,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Assignment
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material.icons.filled.TrendingUp
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material3.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,6 +41,8 @@ import com.example.data.LedgerEntry
 import com.example.data.Utils
 import com.example.data.Voucher
 import com.example.ui.AppViewModel
+import com.example.ui.theme.Colors
+import com.example.R
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -48,6 +54,9 @@ fun DashboardScreen(
 ) {
     val vouchers by viewModel.vouchers.collectAsState()
     val ledgerEntries by viewModel.ledgerEntries.collectAsState()
+    val products by viewModel.products.collectAsState()
+    
+    var searchQuery by remember { mutableStateOf("") }
 
     val scrollState = rememberScrollState()
 
@@ -143,29 +152,60 @@ fun DashboardScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Surface(
-                        modifier = Modifier.size(36.dp),
-                        shape = RoundedCornerShape(8.dp),
-                        color = Color(0xFF0F172A)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                text = "Z",
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 18.sp
-                            )
-                        }
-                    }
+                    Image(
+                        painter = painterResource(id = R.drawable.business_logo),
+                        contentDescription = "Business Logo",
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                    )
                     Text(
                         text = "ZeroBook",
                         fontSize = 22.sp,
                         fontWeight = FontWeight.Bold,
-                        color = Color(0xFF0F172A),
+                        color = Colors.textPrimary,
                         letterSpacing = (-0.5).sp
                     )
                 }
                 Column(horizontalAlignment = Alignment.End) {
+                    // Financial Year Selector
+                    var showFyDialog by remember { mutableStateOf(false) }
+                    val financialYear by viewModel.financialYear.collectAsState()
+
+                    Text(
+                        text = "FY: $financialYear",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Colors.primary,
+                        modifier = Modifier
+                            .clickable { showFyDialog = true }
+                            .padding(4.dp)
+                    )
+                    if (showFyDialog) {
+                        AlertDialog(
+                            onDismissRequest = { showFyDialog = false },
+                            title = { Text("Select Financial Year") },
+                            text = {
+                                Column {
+                                    val years = listOf("2024-25", "2025-26", "2026-27", "2027-28")
+                                    years.forEach { year ->
+                                        Text(
+                                            text = year,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable {
+                                                    viewModel.financialYear.value = year
+                                                    showFyDialog = false
+                                                }
+                                                .padding(vertical = 12.dp)
+                                        )
+                                    }
+                                }
+                            },
+                            confirmButton = { TextButton(onClick = { showFyDialog = false }) { Text("Close") } }
+                        )
+                    }
+
                     val gstinDisplay = if (profile?.gstin.isNullOrBlank()) "NA" else profile!!.gstin
                     Text(
                         text = "GSTIN: $gstinDisplay",
@@ -183,160 +223,278 @@ fun DashboardScreen(
                     )
                 }
             }
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(8.dp))
             HorizontalDivider(color = Color(0xFFF2F2F2), thickness = 1.dp)
         }
 
-        // High Density Styled Quick Action circular buttons
-        Row(
+        // Global Search Bar
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            placeholder = { Text("Search vouchers, ledger, or stock (ID/Name/Date)...", fontSize = 12.sp) },
+            leadingIcon = { Icon(androidx.compose.material.icons.Icons.Default.Search, contentDescription = "Search", tint = Color.Gray, modifier = Modifier.size(18.dp)) },
+            trailingIcon = {
+                if (searchQuery.isNotEmpty()) {
+                    IconButton(onClick = { searchQuery = "" }, modifier = Modifier.size(20.dp)) {
+                        Icon(androidx.compose.material.icons.Icons.Default.Clear, contentDescription = "Clear", tint = Color.Gray)
+                    }
+                }
+            },
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 4.dp),
-            horizontalArrangement = Arrangement.SpaceAround,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            QuickActionItem(
-                label = "New Sale",
-                icon = Icons.Default.Receipt,
-                backgroundColor = Color(0xFFE3F2FD),
-                iconColor = Color(0xFF1A73E8),
-                onClick = { onQuickAction("SALE") }
-            )
-            QuickActionItem(
-                label = "Receipt",
-                icon = Icons.Default.Payments,
-                backgroundColor = Color(0xFFE8F5E9),
-                iconColor = Color(0xFF28A745),
-                onClick = { onQuickAction("RECEIPT") }
-            )
-            QuickActionItem(
-                label = "Purchase",
-                icon = Icons.Default.Add,
-                backgroundColor = Color(0xFFFCE4EC),
-                iconColor = Color(0xFFDC3545),
-                onClick = { onQuickAction("PURCHASE") }
-            )
-            QuickActionItem(
-                label = "Party",
-                icon = Icons.Default.TrendingUp,
-                backgroundColor = Color(0xFFF3E5F5),
-                iconColor = Color(0xFF9C27B0),
-                onClick = { onQuickAction("PARTY") }
-            )
-        }
-
-        Spacer(modifier = Modifier.height(2.dp))
-
-        // Analytical Cards Grid Structure (2-columns wide)
-        val cardList = listOf(
-            KpiDetails("Today's Sales", Utils.formatIndianCurrency(todaySales), "Refreshed live", Color(0xFF1A73E8)),
-            KpiDetails("Today's Purchases", Utils.formatIndianCurrency(todayPurchases), "Outgoing items", Color(0xFFBAC5D6)),
-            KpiDetails("This Month's Sales", Utils.formatIndianCurrency(thisMonthSales), "Monthly target", Color(0xFF28A745)),
-            KpiDetails("Net Profit (Est.)", Utils.formatIndianCurrency(netProfit), "Revenue minus cost", if (netProfit >= 0) Color(0xFF28A745) else Color(0xFFDC3545)),
-            KpiDetails("Receivables (Dr)", Utils.formatIndianCurrency(outstandingReceivable), "Owed by customers", Color(0xFFDC3545)),
-            KpiDetails("Payables (Cr)", Utils.formatIndianCurrency(outstandingPayable), "Owed to suppliers", Color(0xFF9C27B0)),
-            KpiDetails("Cash Account", Utils.formatIndianCurrency(cashBalance), "In-hand cash float", Color(0xFFFD7E14)),
-            KpiDetails("Bank & UPI", Utils.formatIndianCurrency(bankBalance), "Account running total", Color(0xFF17A2B8))
+                .height(50.dp),
+            shape = RoundedCornerShape(12.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = Color(0xFF1A73E8),
+                unfocusedBorderColor = Color(0xFFE8E8E8),
+                focusedContainerColor = Color(0xFFF8F9FA),
+                unfocusedContainerColor = Color(0xFFF8F9FA)
+            ),
+            singleLine = true,
+            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp)
         )
 
-        // Render card structure cleanly without nesting LazyVerticalGrid inside a scrollable Column
-        val kpiChunks = cardList.chunked(2)
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            kpiChunks.forEach { pair ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+        if (searchQuery.isNotBlank()) {
+            val q = searchQuery.lowercase()
+            
+            val foundVouchers = vouchers.filter { 
+                it.voucherNo.lowercase().contains(q) || 
+                (it.partyId?.lowercase()?.contains(q) == true) || 
+                it.type.lowercase().contains(q) || 
+                Utils.formatDate(it.date).lowercase().contains(q) 
+            }.take(5)
+            
+            val foundLedger = ledgerEntries.filter { 
+                it.id.lowercase().contains(q) || 
+                it.accountHead.lowercase().contains(q) || 
+                (it.narration?.lowercase()?.contains(q) == true) || 
+                Utils.formatDate(it.date).lowercase().contains(q) 
+            }.take(5)
+            
+            val foundProducts = products.filter {
+                it.id.lowercase().contains(q) ||
+                it.name.lowercase().contains(q) ||
+                (it.hsnCode?.lowercase()?.contains(q) == true)
+            }.take(5)
+
+            if (foundVouchers.isEmpty() && foundLedger.isEmpty() && foundProducts.isEmpty()) {
+                Text("No results found.", fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(vertical = 8.dp))
+            } else {
+                Card(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    border = BorderStroke(1.dp, Color(0xFFE8E8E8)),
+                    shape = RoundedCornerShape(8.dp)
                 ) {
-                    pair.forEach { card ->
-                        Box(modifier = Modifier.weight(1f)) {
-                            KpiCard(card)
+                    Column(modifier = Modifier.verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (foundVouchers.isNotEmpty()) {
+                            Text("Vouchers", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1A73E8))
+                            foundVouchers.forEach { v ->
+                                Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("${v.voucherNo} • ${v.type}", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                        Text("${v.partyId ?: "Cash"} • ${Utils.formatDate(v.date)}", fontSize = 10.sp, color = Color.Gray)
+                                    }
+                                    Text(Utils.formatIndianCurrency(v.netAmount), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1A1A1A))
+                                }
+                                HorizontalDivider(color = Color(0xFFF2F2F2), thickness = 0.5.dp)
+                            }
                         }
-                    }
-                    if (pair.size < 2) {
-                        Spacer(modifier = Modifier.weight(1f))
+                        
+                        if (foundLedger.isNotEmpty()) {
+                            if (foundVouchers.isNotEmpty()) Spacer(modifier = Modifier.height(4.dp))
+                            Text("Ledger Entries", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF9C27B0))
+                            foundLedger.forEach { l ->
+                                Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(l.accountHead, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                        Text(l.narration ?: "No Narration", fontSize = 10.sp, color = Color.Gray)
+                                    }
+                                    val amt = if (l.debit > 0) "Dr. ${Utils.formatIndianCurrency(l.debit)}" else "Cr. ${Utils.formatIndianCurrency(l.credit)}"
+                                    Text(amt, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (l.debit > 0) Color(0xFFDC3545) else Color(0xFF28A745))
+                                }
+                                HorizontalDivider(color = Color(0xFFF2F2F2), thickness = 0.5.dp)
+                            }
+                        }
+                        
+                        if (foundProducts.isNotEmpty()) {
+                            if (foundVouchers.isNotEmpty() || foundLedger.isNotEmpty()) Spacer(modifier = Modifier.height(4.dp))
+                            Text("Stock Items", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF28A745))
+                            foundProducts.forEach { p ->
+                                Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("${p.name}", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                        Text("HSN: ${p.hsnCode ?: "N/A"} • Stock: ${p.openingStock}", fontSize = 10.sp, color = Color.Gray)
+                                    }
+                                    Text(Utils.formatIndianCurrency(p.saleRate), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1A1A1A))
+                                }
+                                HorizontalDivider(color = Color(0xFFF2F2F2), thickness = 0.5.dp)
+                            }
+                        }
                     }
                 }
             }
         }
+        
+        if (searchQuery.isBlank()) {
+            // High Density Styled Quick Action circular buttons
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceAround,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                QuickActionItem(
+                    label = "Vouchers",
+                    icon = Icons.Default.Receipt,
+                    backgroundColor = Color(0xFFE3F2FD),
+                    iconColor = Color(0xFF1A73E8),
+                    onClick = { onQuickAction("SALE") }
+                )
+                QuickActionItem(
+                    label = "Receipt",
+                    icon = Icons.Default.Payments,
+                    backgroundColor = Color(0xFFE8F5E9),
+                    iconColor = Color(0xFF28A745),
+                    onClick = { onQuickAction("RECEIPT") }
+                )
+                QuickActionItem(
+                    label = "Payments",
+                    icon = Icons.Default.Add,
+                    backgroundColor = Color(0xFFFCE4EC),
+                    iconColor = Color(0xFFDC3545),
+                    onClick = { onQuickAction("PAYMENT") }
+                )
+                QuickActionItem(
+                    label = "Reports",
+                    icon = Icons.Default.Assignment,
+                    backgroundColor = Color(0xFFFFF3E0),
+                    iconColor = Color(0xFFFF9800),
+                    onClick = { onQuickAction("REPORTS") }
+                )
+                QuickActionItem(
+                    label = "Party",
+                    icon = Icons.Default.TrendingUp,
+                    backgroundColor = Color(0xFFF3E5F5),
+                    iconColor = Color(0xFF9C27B0),
+                    onClick = { onQuickAction("PARTY") }
+                )
+            }
 
-        Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(2.dp))
 
-        // Custom Native Visual Chart 1: Sales vs Purchases Bar Chart (Last 6 Months)
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(1.dp, Color(0xFFE8E8E8), RoundedCornerShape(16.dp)),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFFF8F9FA))
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+            // Analytical Cards Grid Structure (2-columns wide)
+            val cardList = listOf(
+                KpiDetails("Today's Sales", Utils.formatIndianCurrency(todaySales), "Refreshed live", Color(0xFF1A73E8)),
+                KpiDetails("Today's Purchases", Utils.formatIndianCurrency(todayPurchases), "Outgoing items", Color(0xFFBAC5D6)),
+                KpiDetails("This Month's Sales", Utils.formatIndianCurrency(thisMonthSales), "Monthly target", Color(0xFF28A745)),
+                KpiDetails("Net Profit (Est.)", Utils.formatIndianCurrency(netProfit), "Revenue minus cost", if (netProfit >= 0) Color(0xFF28A745) else Color(0xFFDC3545)),
+                KpiDetails("Receivables (Dr)", Utils.formatIndianCurrency(outstandingReceivable), "Owed by customers", Color(0xFFDC3545)),
+                KpiDetails("Payables (Cr)", Utils.formatIndianCurrency(outstandingPayable), "Owed to suppliers", Color(0xFF9C27B0)),
+                KpiDetails("Cash Account", Utils.formatIndianCurrency(cashBalance), "In-hand cash float", Color(0xFFFD7E14)),
+                KpiDetails("Bank & UPI", Utils.formatIndianCurrency(bankBalance), "Account running total", Color(0xFF17A2B8))
+            )
+
+            // Render card structure cleanly without nesting LazyVerticalGrid inside a scrollable Column
+            val kpiChunks = cardList.chunked(2)
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                kpiChunks.forEach { pair ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        pair.forEach { card ->
+                            Box(modifier = Modifier.weight(1f)) {
+                                KpiCard(card)
+                            }
+                        }
+                        if (pair.size < 2) {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // Custom Native Visual Chart 1: Sales vs Purchases Bar Chart (Last 6 Months)
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, Color(0xFFE8E8E8), RoundedCornerShape(16.dp)),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFF8F9FA))
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Weekly Sales (6 months)",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF1A1A1A)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .background(Color(0xFFE3F2FD), RoundedCornerShape(12.dp))
+                                .padding(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = "VIEW REPORT",
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF1A73E8)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    SalesPurchasesBarChart(vouchers)
+                }
+            }
+
+            // Custom Chart 2: Daily Cash Flow Line Chart (Last 30 Days)
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, Color(0xFFE8E8E8), RoundedCornerShape(16.dp)),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFF8F9FA))
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        text = "Weekly Sales (6 months)",
+                        text = "Net Cash Flow Trend (Last 30 Days)",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF1A1A1A)
                     )
-                    Box(
-                        modifier = Modifier
-                            .background(Color(0xFFE3F2FD), RoundedCornerShape(12.dp))
-                            .padding(horizontal = 8.dp, vertical = 2.dp)
-                    ) {
-                        Text(
-                            text = "VIEW REPORT",
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF1A73E8)
-                        )
-                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    CashFlowLineChart(vouchers)
                 }
-                Spacer(modifier = Modifier.height(12.dp))
-                SalesPurchasesBarChart(vouchers)
             }
-        }
 
-        // Custom Chart 2: Daily Cash Flow Line Chart (Last 30 Days)
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(1.dp, Color(0xFFE8E8E8), RoundedCornerShape(16.dp)),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFFF8F9FA))
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text(
-                    text = "Net Cash Flow Trend (Last 30 Days)",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF1A1A1A)
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                CashFlowLineChart(vouchers)
+            // Custom Chart 3: GST Liability Breakdown (CGST / SGST / IGST)
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, Color(0xFFE8E8E8), RoundedCornerShape(16.dp)),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFF8F9FA))
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "GST Collected Liabilities Breakdown",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF1A1A1A)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    GstPieChart(vouchers)
+                }
             }
-        }
 
-        // Custom Chart 3: GST Liability Breakdown (CGST / SGST / IGST)
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(1.dp, Color(0xFFE8E8E8), RoundedCornerShape(16.dp)),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFFF8F9FA))
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text(
-                    text = "GST Collected Liabilities Breakdown",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF1A1A1A)
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                GstPieChart(vouchers)
-            }
+            Spacer(modifier = Modifier.height(32.dp))
         }
-
-        Spacer(modifier = Modifier.height(32.dp))
     }
 }
 
