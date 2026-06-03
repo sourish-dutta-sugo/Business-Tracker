@@ -131,92 +131,44 @@ fun InvoiceScreen(
                         .padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    // Modern Header Block
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .border(0.5.dp, Color.Gray, RoundedCornerShape(4.dp))
-                            .padding(12.dp)
+                    // Buyer and Seller details block
+                    Row(
+                        modifier = Modifier.fillMaxWidth().border(0.5.dp, Color.Gray, RoundedCornerShape(4.dp)).padding(10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Column {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = if (prof.gstin.isBlank()) "INVOICE" else "TAX INVOICE",
-                                    fontSize = 18.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                Text(
-                                    text = prof.businessName,
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF1A1A1A)
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(text = "${prof.address}, ${prof.city}, ${prof.state} - ${prof.pin}", fontSize = 11.sp, color = Color.Gray)
+                        // Seller Details Box (Left)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("SELLER:", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(text = prof.businessName, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text(text = "${prof.address}, ${prof.city}, ${prof.state} - ${prof.pin}", fontSize = 11.sp)
                             val profGst = if (prof.gstin.isBlank()) "NA" else prof.gstin
-                            val profPan = if (prof.pan.isBlank()) "NA" else prof.pan
-                            Text(text = "GSTIN: $profGst | PAN: $profPan", fontSize = 11.sp, color = Color.Gray)
-                            Text(text = "Email: ${prof.email} | Phone: ${prof.phone}", fontSize = 11.sp, color = Color.Gray)
+                            Text(text = "GSTIN: $profGst", fontSize = 11.sp)
+                            Text(text = "Phone: ${prof.phone}", fontSize = 11.sp)
+                        }
+
+                        // Bill To Box (Right)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("BUYER:", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            if (party != null) {
+                                Text(text = party.name, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                Text(text = party.address, fontSize = 11.sp)
+                                Text(text = "${party.city}, ${party.state}", fontSize = 11.sp)
+                                val partyGst = if (party.gstin.isNullOrBlank()) "NA" else party.gstin
+                                Text(text = "GSTIN: $partyGst", fontSize = 11.sp)
+                                Text(text = "Phone: ${party.phone}", fontSize = 11.sp)
+                            } else {
+                                Text(text = "Cash / Walk-in Customer", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
 
-                    // Invoice Metadata columns
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        // Bill To Box
-                        Box(
-                            modifier = Modifier
-                                .weight(1.1f)
-                                .border(0.5.dp, Color.LightGray, RoundedCornerShape(4.dp))
-                                .padding(10.dp)
-                        ) {
-                            Column {
-                                Text("BILL TO:", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
-                                Spacer(modifier = Modifier.height(4.dp))
-                                if (party != null) {
-                                    Text(text = party.name, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1A1A1A))
-                                    Text(text = party.address, fontSize = 11.sp, color = Color.Gray)
-                                    Text(text = "${party.city}, ${party.state}", fontSize = 11.sp, color = Color.Gray)
-                                    val partyGst = if (party.gstin.isNullOrBlank()) "NA" else party.gstin
-                                    Text(text = "GSTIN: $partyGst", fontSize = 11.sp, color = Color.Gray)
-                                } else {
-                                    Text(text = "Cash / Walk-in Customer", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1A1A1A))
-                                    Text(text = "Consumer (B2C Transaction)", fontSize = 11.sp, color = Color.Gray)
-                                }
-                            }
-                        }
-
-                        // Meta details Box
-                        Box(
-                            modifier = Modifier
-                                .weight(0.9f)
-                                .border(0.5.dp, Color.LightGray, RoundedCornerShape(4.dp))
-                                .padding(10.dp)
-                        ) {
-                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text("INVOICE INFO:", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
-                                Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                                    Text("Invoice No:", fontSize = 11.sp, color = Color.Gray)
-                                    Text(v.voucherNo, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                }
-                                Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                                    Text("Date:", fontSize = 11.sp, color = Color.Gray)
-                                    Text(Utils.formatDate(v.date), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                }
-                                Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                                    Text("Mode:", fontSize = 11.sp, color = Color.Gray)
-                                    Text(v.paymentMode, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
+                    // Invoice Metadata
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Invoice No: ${v.voucherNo}", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text("Date: ${Utils.formatDate(v.date)}", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text("Mode: ${v.paymentMode}", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
 
                     // Item Table Block

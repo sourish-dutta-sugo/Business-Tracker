@@ -152,13 +152,6 @@ fun DashboardScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Image(
-                        painter = painterResource(id = R.drawable.business_logo),
-                        contentDescription = "Business Logo",
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                    )
                     Text(
                         text = "ZeroBook",
                         fontSize = 22.sp,
@@ -169,42 +162,20 @@ fun DashboardScreen(
                 }
                 Column(horizontalAlignment = Alignment.End) {
                     // Financial Year Selector
-                    var showFyDialog by remember { mutableStateOf(false) }
                     val financialYear by viewModel.financialYear.collectAsState()
 
-                    Text(
-                        text = "FY: $financialYear",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Colors.primary,
-                        modifier = Modifier
-                            .clickable { showFyDialog = true }
-                            .padding(4.dp)
-                    )
-                    if (showFyDialog) {
-                        AlertDialog(
-                            onDismissRequest = { showFyDialog = false },
-                            title = { Text("Select Financial Year") },
-                            text = {
-                                Column {
-                                    val years = listOf("2024-25", "2025-26", "2026-27", "2027-28")
-                                    years.forEach { year ->
-                                        Text(
-                                            text = year,
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clickable {
-                                                    viewModel.financialYear.value = year
-                                                    showFyDialog = false
-                                                }
-                                                .padding(vertical = 12.dp)
-                                        )
-                                    }
-                                }
-                            },
-                            confirmButton = { TextButton(onClick = { showFyDialog = false }) { Text("Close") } }
+                    OutlinedTextField(
+                        value = financialYear,
+                        onValueChange = { viewModel.financialYear.value = it },
+                        label = { Text("FY", fontSize = 10.sp) },
+                        modifier = Modifier.width(100.dp),
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Bold),
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Colors.primary,
+                            unfocusedTextColor = Colors.primary
                         )
-                    }
+                    )
 
                     val gstinDisplay = if (profile?.gstin.isNullOrBlank()) "NA" else profile!!.gstin
                     Text(

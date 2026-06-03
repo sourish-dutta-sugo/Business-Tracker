@@ -506,22 +506,6 @@ fun SettingsScreen(
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
-                Text("Financial Settings", fontWeight = FontWeight.Bold, color = Colors.primary)
-                Text("Financial Year begins from:", fontSize = 12.sp, color = Colors.textSecondary)
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(
-                        selected = selectedFyStart == "01-04",
-                        onClick = { selectedFyStart = "01-04" },
-                        label = { Text("1st April (India)") }
-                    )
-                    FilterChip(
-                        selected = selectedFyStart == "01-01",
-                        onClick = { selectedFyStart = "01-01" },
-                        label = { Text("1st January") }
-                    )
-                }
-                
-                Spacer(modifier = Modifier.height(8.dp))
                 Button(
                     onClick = {
                         if (bName.isBlank() || owner.isBlank() || address.isBlank() || city.isBlank() || phone.isBlank() || bankName.isBlank() || accountNo.isBlank() || ifsc.isBlank()) {

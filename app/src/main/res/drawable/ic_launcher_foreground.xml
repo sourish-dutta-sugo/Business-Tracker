@@ -3,6 +3,9 @@
     <item
         android:width="66dp"
         android:height="66dp"
-        android:drawable="@drawable/business_logo"
-        android:gravity="center" />
+        android:gravity="center">
+        <shape android:shape="oval">
+            <solid android:color="#FFFFFF"/>
+        </shape>
+    </item>
 </layer-list>
