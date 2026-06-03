@@ -54,6 +54,28 @@ fun SettingsScreen(
     val origProfile by viewModel.profile.collectAsState()
 
     var activeSubMode by remember { mutableStateOf("MENU") } // "MENU", "BUSINESS", "LOCK", "ABOUT"
+    val vouchersForExport by viewModel.vouchers.collectAsState(initial = emptyList())
+
+    val createCsvLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.CreateDocument("text/csv")
+    ) { uri ->
+        if (uri != null) {
+            try {
+                context.contentResolver.openOutputStream(uri)?.use { output ->
+                    output.write("VoucherNo,Date,Type,Party,PaymentMode,TaxableAmount,CGST,SGST,IGST,RoundOff,NetAmount\n".toByteArray())
+                    val javaSdf = java.text.SimpleDateFormat("dd-MM-yyyy HH:mm", java.util.Locale.US)
+                    for (v in vouchersForExport) {
+                        val dateStr = javaSdf.format(java.util.Date(v.createdAt))
+                        val rowStr = "${v.voucherNo},$dateStr,${v.type},${v.partyId ?: "Cash"},${v.paymentMode},${v.taxableAmount},${v.cgst},${v.sgst},${v.igst},${v.roundOff},${v.netAmount}\n"
+                        output.write(rowStr.toByteArray())
+                    }
+                }
+                android.widget.Toast.makeText(context, "Excel (CSV) Export completed successfully!", android.widget.Toast.LENGTH_LONG).show()
+            } catch (e: Exception) {
+                android.widget.Toast.makeText(context, "Export failed: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     if (activeSubMode == "MENU") {
         val scrollState = rememberScrollState()
@@ -126,7 +148,7 @@ fun SettingsScreen(
                         ) {
                             Button(
                                 onClick = {
-                                    Toast.makeText(context, "Full SQLite ledger backup completed successfully (Saved to Downloads/ZeroBook_Backup.sqlite)", Toast.LENGTH_LONG).show()
+                                    createCsvLauncher.launch("ZeroBook_Ledger.csv")
                                 },
                                 shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier.weight(1f),
@@ -135,7 +157,7 @@ fun SettingsScreen(
                                     contentColor = Colors.primaryText
                                 )
                             ) {
-                                Text("Export Backup", fontSize = 11.sp)
+                                Text("Export to CSV", fontSize = 11.sp)
                             }
                             OutlinedButton(
                                 onClick = {
@@ -172,6 +194,7 @@ fun SettingsScreen(
         var bankName by remember { mutableStateOf(profile.bankName) }
         var accountNo by remember { mutableStateOf(profile.accountNo) }
         var ifsc by remember { mutableStateOf(profile.ifsc) }
+        var selectedFyStart by remember { mutableStateOf(profile.fyStart) }
 
         var stateDropdownExpanded by remember { mutableStateOf(false) }
         val formScroll = rememberScrollState()
@@ -182,6 +205,27 @@ fun SettingsScreen(
         var canvasWidth by remember { mutableStateOf(400) }
         var canvasHeight by remember { mutableStateOf(160) }
         var isSignatureSaved by remember { mutableStateOf(profile.signaturePath != null && java.io.File(profile.signaturePath).exists()) }
+
+        val imageLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+            contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
+        ) { uri ->
+            if (uri != null) {
+                try {
+                    val inputStream = context.contentResolver.openInputStream(uri)
+                    val sigFile = java.io.File(context.filesDir, "business_signature.png")
+                    val outputStream = java.io.FileOutputStream(sigFile)
+                    inputStream?.copyTo(outputStream)
+                    inputStream?.close()
+                    outputStream.close()
+                    isSignatureSaved = true
+                    signaturePaths.clear()
+                    android.widget.Toast.makeText(context, "Signature image uploaded!", android.widget.Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    android.widget.Toast.makeText(context, "Upload failed", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
 
         Scaffold(
             topBar = {
@@ -374,14 +418,14 @@ fun SettingsScreen(
 
                     if (signaturePaths.isEmpty() && signatureCurrentPath.isEmpty() && !isSignatureSaved) {
                         Text(
-                            text = "Sign Here inside this yellow area",
-                            color = Color.LightGray,
+                            text = "Draw Here OR Upload Image Below",
+                            color = Colors.textSecondary,
                             fontSize = 13.sp,
                             modifier = Modifier.align(Alignment.Center)
                         )
                     } else if (isSignatureSaved && signaturePaths.isEmpty()) {
                         Text(
-                            text = "✏️ Digital Signature Registered\n(Draw here to replace)",
+                            text = "✏️ Signature Saved\n(Draw/Upload to replace)",
                             color = Colors.success,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
@@ -396,6 +440,13 @@ fun SettingsScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     OutlinedButton(
+                        onClick = { imageLauncher.launch("image/*") },
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Upload Image", fontSize = 11.sp)
+                    }
+                    OutlinedButton(
                         onClick = {
                             signaturePaths.clear()
                             signatureCurrentPath = emptyList()
@@ -404,7 +455,7 @@ fun SettingsScreen(
                         shape = RoundedCornerShape(6.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("Clear Trace", fontSize = 11.sp, color = Colors.danger)
+                        Text("Clear", fontSize = 11.sp, color = Colors.danger)
                     }
 
                     Button(
@@ -455,6 +506,22 @@ fun SettingsScreen(
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
+                Text("Financial Settings", fontWeight = FontWeight.Bold, color = Colors.primary)
+                Text("Financial Year begins from:", fontSize = 12.sp, color = Colors.textSecondary)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = selectedFyStart == "01-04",
+                        onClick = { selectedFyStart = "01-04" },
+                        label = { Text("1st April (India)") }
+                    )
+                    FilterChip(
+                        selected = selectedFyStart == "01-01",
+                        onClick = { selectedFyStart = "01-01" },
+                        label = { Text("1st January") }
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(8.dp))
                 Button(
                     onClick = {
                         if (bName.isBlank() || owner.isBlank() || address.isBlank() || city.isBlank() || phone.isBlank() || bankName.isBlank() || accountNo.isBlank() || ifsc.isBlank()) {
@@ -468,7 +535,8 @@ fun SettingsScreen(
                                 state = selectedStateInfo.first, stateCode = selectedStateInfo.second,
                                 phone = phone, email = email, gstin = gstin, pan = pan,
                                 bankName = bankName, accountNo = accountNo, ifsc = ifsc,
-                                signaturePath = if (isSignatureSaved) File(context.filesDir, "business_signature.png").absolutePath else null
+                                signaturePath = if (isSignatureSaved) java.io.File(context.filesDir, "business_signature.png").absolutePath else null,
+                                fyStart = selectedFyStart
                             )
                             viewModel.updateProfile(nextProfile) {
                                 Toast.makeText(context, "Business Profile successfully updated!", Toast.LENGTH_SHORT).show()

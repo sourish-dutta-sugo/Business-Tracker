@@ -40,6 +40,46 @@ fun InvoiceScreen(
     var voucher by remember { mutableStateOf<Voucher?>(null) }
     var voucherItems by remember { mutableStateOf<List<VoucherItem>>(emptyList()) }
 
+    val createPdfLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/pdf")
+    ) { uri ->
+        if (uri != null && voucher != null) {
+            try {
+                val v = voucher!!
+                val pref = profile
+                val party = parties.find { it.name == v.partyId }
+                val javaSdf = java.text.SimpleDateFormat("dd-MM-yyyy HH:mm", java.util.Locale.US)
+                val dateStr = javaSdf.format(java.util.Date(v.createdAt))
+                val pdfFile = com.example.data.PdfUtils.generatePdfInvoice(
+                    context = context,
+                    profile = pref,
+                    voucherNo = v.voucherNo,
+                    dateFormatted = dateStr,
+                    partyName = party?.name ?: "Cash / Walk-in Customer",
+                    paymentMode = v.paymentMode,
+                    lineItems = voucherItems,
+                    taxable = v.taxableAmount,
+                    cgst = v.cgst,
+                    sgst = v.sgst,
+                    igst = v.igst,
+                    roundOff = v.roundOff,
+                    net = v.netAmount
+                )
+                if (pdfFile != null) {
+                    context.contentResolver.openOutputStream(uri)?.use { output ->
+                        pdfFile.inputStream().use { input ->
+                            input.copyTo(output)
+                        }
+                    }
+                    android.widget.Toast.makeText(context, "PDF saved successfully", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                android.widget.Toast.makeText(context, "Failed to save PDF", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     LaunchedEffect(voucherId) {
         voucher = viewModel.getVoucherById(voucherId)
         viewModel.getItemsForVoucher(voucherId).collect { items ->
@@ -381,31 +421,8 @@ fun InvoiceScreen(
                 ) {
                     Button(
                         onClick = {
-                            try {
-                                val javaSdf = java.text.SimpleDateFormat("dd-MM-yyyy HH:mm", java.util.Locale.US)
-                                val dateStr = javaSdf.format(java.util.Date(v.createdAt))
-                                val pdfFile = PdfUtils.generatePdfInvoice(
-                                    context = context,
-                                    profile = prof,
-                                    voucherNo = v.voucherNo,
-                                    dateFormatted = dateStr,
-                                    partyName = party?.name ?: "Cash / Walk-in Customer",
-                                    paymentMode = v.paymentMode,
-                                    lineItems = voucherItems,
-                                    taxable = v.taxableAmount,
-                                    cgst = v.cgst,
-                                    sgst = v.sgst,
-                                    igst = v.igst,
-                                    roundOff = v.roundOff,
-                                    net = v.netAmount
-                                )
-                                if (pdfFile != null) {
-                                    Toast.makeText(context, "Saved PDF directly to Downloads: ${pdfFile.absolutePath}", Toast.LENGTH_LONG).show()
-                                } else {
-                                    Toast.makeText(context, "Failed to generate PDF", Toast.LENGTH_SHORT).show()
-                                }
-                            } catch (e: Exception) {
-                                e.printStackTrace()
+                            if (v != null) {
+                                createPdfLauncher.launch("Invoice_${v.voucherNo.replace("/", "_")}.pdf")
                             }
                         },
                         modifier = Modifier.weight(1f).height(48.dp),

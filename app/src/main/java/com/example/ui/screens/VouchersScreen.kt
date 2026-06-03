@@ -565,121 +565,6 @@ fun NewVoucherScreen(
                         )
                     }
 
-                    // Payment Mode Selector
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Mode:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Colors.textSecondary)
-                        val modes = listOf("CASH", "BANK", "CHEQUE", "UPI")
-                        modes.forEach { mode ->
-                            FilterChip(
-                                selected = paymentMode == mode,
-                                onClick = { paymentMode = mode },
-                                label = { Text(mode, fontSize = 10.sp) },
-                                shape = RoundedCornerShape(4.dp)
-                            )
-                        }
-                    }
-
-                    // Payment Mode Details
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFC)),
-                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text(
-                                text = "$paymentMode DETAILS",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp,
-                                color = Colors.primary,
-                                letterSpacing = 0.5.sp
-                            )
-                            
-                            if (paymentMode == "CASH") {
-                                Text(
-                                    text = "Payment will be registered instantly in the local Cash Ledger. Normal cash-in-hand flows apply.",
-                                    fontSize = 11.sp,
-                                    color = Colors.textSecondary
-                                )
-                            }
-                            
-                            if (paymentMode == "BANK") {
-                                RetailTextField(
-                                    value = bankNameDetail,
-                                    onValueChange = { bankNameDetail = it },
-                                    label = "Bank Name *"
-                                )
-                                RetailTextField(
-                                    value = bankAccountHolder,
-                                    onValueChange = { bankAccountHolder = it },
-                                    label = "Account Holder Name *"
-                                )
-                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    RetailTextField(
-                                        value = bankIfsc,
-                                        onValueChange = { bankIfsc = it },
-                                        label = "IFSC Code *",
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    RetailTextField(
-                                        value = branchName,
-                                        onValueChange = { branchName = it },
-                                        label = "Branch Name",
-                                        modifier = Modifier.weight(1.2f)
-                                    )
-                                }
-                            }
-                            
-                            if (paymentMode == "CHEQUE") {
-                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    RetailTextField(
-                                        value = chequeNo,
-                                        onValueChange = { chequeNo = it },
-                                        label = "Cheque No *",
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    RetailTextField(
-                                        value = bankName,
-                                        onValueChange = { bankName = it },
-                                        label = "Bank Name *",
-                                        modifier = Modifier.weight(1.2f)
-                                    )
-                                }
-                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    RetailTextField(
-                                        value = branchName,
-                                        onValueChange = { branchName = it },
-                                        label = "Branch Name",
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    RetailTextField(
-                                        value = memoNumber,
-                                        onValueChange = { memoNumber = it },
-                                        label = "Memo/Voucher No",
-                                        modifier = Modifier.weight(1.2f)
-                                    )
-                                }
-                            }
-                            
-                            if (paymentMode == "UPI") {
-                                Text(
-                                    text = "UPI Mode active. For sales, saving the transaction will show an on-screen UPI QR Code scanner linked to your business account to automatically pull, verify, and auto-print customer invoices.",
-                                    fontSize = 11.sp,
-                                    color = Colors.textSecondary
-                                )
-                                RetailTextField(
-                                    value = bankNameDetail,
-                                    onValueChange = { bankNameDetail = it },
-                                    label = "Paying UPI / Reference App ID (Optional)"
-                                )
-                            }
-                        }
-                    }
-
                     // Purchase Invoice Attachment Panel (real launcher and URI recording!)
                     val isPurchaseType = selectedType == "PURCHASE" || selectedType == "PURCHASE_RETURN"
                     if (isPurchaseType) {
@@ -1066,6 +951,121 @@ fun NewVoucherScreen(
                     }
                 }
 
+                // Payment Mode Selector (Moved to Summary Area)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Mode:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Colors.textSecondary)
+                    val modes = listOf("CASH", "BANK", "CHEQUE", "UPI")
+                    modes.forEach { mode ->
+                        FilterChip(
+                            selected = paymentMode == mode,
+                            onClick = { paymentMode = mode },
+                            label = { Text(mode, fontSize = 10.sp) },
+                            shape = RoundedCornerShape(4.dp)
+                        )
+                    }
+                }
+
+                // Payment Mode Details
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFC)),
+                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            text = "$paymentMode DETAILS",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                            color = Colors.primary,
+                            letterSpacing = 0.5.sp
+                        )
+                        
+                        if (paymentMode == "CASH") {
+                            Text(
+                                text = "Payment will be registered instantly in the local Cash Ledger. Normal cash-in-hand flows apply.",
+                                fontSize = 11.sp,
+                                color = Colors.textSecondary
+                            )
+                        }
+                        
+                        if (paymentMode == "BANK") {
+                            RetailTextField(
+                                value = bankNameDetail,
+                                onValueChange = { bankNameDetail = it },
+                                label = "Bank Name *"
+                            )
+                            RetailTextField(
+                                value = bankAccountHolder,
+                                onValueChange = { bankAccountHolder = it },
+                                label = "Account Holder Name *"
+                            )
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                RetailTextField(
+                                    value = bankIfsc,
+                                    onValueChange = { bankIfsc = it },
+                                    label = "IFSC Code *",
+                                    modifier = Modifier.weight(1f)
+                                )
+                                RetailTextField(
+                                    value = branchName,
+                                    onValueChange = { branchName = it },
+                                    label = "Branch Name",
+                                    modifier = Modifier.weight(1.2f)
+                                )
+                            }
+                        }
+                        
+                        if (paymentMode == "CHEQUE") {
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                RetailTextField(
+                                    value = chequeNo,
+                                    onValueChange = { chequeNo = it },
+                                    label = "Cheque No *",
+                                    modifier = Modifier.weight(1f)
+                                )
+                                RetailTextField(
+                                    value = bankName,
+                                    onValueChange = { bankName = it },
+                                    label = "Bank Name *",
+                                    modifier = Modifier.weight(1.2f)
+                                )
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                RetailTextField(
+                                    value = branchName,
+                                    onValueChange = { branchName = it },
+                                    label = "Branch Name",
+                                    modifier = Modifier.weight(1f)
+                                )
+                                RetailTextField(
+                                    value = memoNumber,
+                                    onValueChange = { memoNumber = it },
+                                    label = "Memo/Voucher No",
+                                    modifier = Modifier.weight(1.2f)
+                                )
+                            }
+                        }
+                        
+                        if (paymentMode == "UPI") {
+                            Text(
+                                text = "UPI Mode active. For sales, saving the transaction will show an on-screen UPI QR Code scanner linked to your business account to automatically pull, verify, and auto-print customer invoices.",
+                                fontSize = 11.sp,
+                                color = Colors.textSecondary
+                            )
+                            RetailTextField(
+                                value = bankNameDetail,
+                                onValueChange = { bankNameDetail = it },
+                                label = "Paying UPI / Reference App ID (Optional)"
+                            )
+                        }
+                    }
+                }
+
                 // GST Live Summary Panel
                 Card(
                     modifier = Modifier
@@ -1081,21 +1081,19 @@ fun NewVoucherScreen(
                             Text("Taxable Amount:", fontSize = 11.sp, color = Colors.textSecondary)
                             Text(Utils.formatIndianCurrency(taxableAmount.value), fontSize = 11.sp, color = Colors.textSecondary)
                         }
-                        if (hasGst) {
-                            if (isInterstate) {
-                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("IGST:", fontSize = 11.sp, color = Colors.textSecondary)
-                                    Text(Utils.formatIndianCurrency(igst.value), fontSize = 11.sp, color = Colors.textSecondary)
-                                }
-                            } else {
-                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("CGST:", fontSize = 11.sp, color = Colors.textSecondary)
-                                    Text(Utils.formatIndianCurrency(cgst.value), fontSize = 11.sp, color = Colors.textSecondary)
-                                }
-                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("SGST:", fontSize = 11.sp, color = Colors.textSecondary)
-                                    Text(Utils.formatIndianCurrency(sgst.value), fontSize = 11.sp, color = Colors.textSecondary)
-                                }
+                        if (isInterstate) {
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("IGST:", fontSize = 11.sp, color = Colors.textSecondary)
+                                Text(Utils.formatIndianCurrency(igst.value), fontSize = 11.sp, color = Colors.textSecondary)
+                            }
+                        } else {
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("CGST:", fontSize = 11.sp, color = Colors.textSecondary)
+                                Text(Utils.formatIndianCurrency(cgst.value), fontSize = 11.sp, color = Colors.textSecondary)
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("SGST:", fontSize = 11.sp, color = Colors.textSecondary)
+                                Text(Utils.formatIndianCurrency(sgst.value), fontSize = 11.sp, color = Colors.textSecondary)
                             }
                         }
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -1354,6 +1352,46 @@ fun NewVoucherScreen(
         )
     }
 
+    val createPdfLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/pdf")
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val dateStr = java.text.SimpleDateFormat("dd-MMM-yyyy hh:mm a", java.util.Locale.getDefault()).format(java.util.Date(voucherDate))
+                val itemsList = lineItems.toList()
+                val pdfFile = com.example.data.PdfUtils.generatePdfInvoice(
+                    context = context,
+                    profile = profile,
+                    voucherNo = voucherNo,
+                    dateFormatted = dateStr,
+                    partyName = selectedParty?.name ?: "Cash Customer",
+                    paymentMode = paymentMode,
+                    lineItems = itemsList,
+                    taxable = taxableAmount.value,
+                    cgst = cgst.value,
+                    sgst = sgst.value,
+                    igst = igst.value,
+                    roundOff = roundOff.value,
+                    net = netAmount.value
+                )
+                if (pdfFile != null) {
+                    context.contentResolver.openOutputStream(uri)?.use { output ->
+                        pdfFile.inputStream().use { input ->
+                            input.copyTo(output)
+                        }
+                    }
+                    android.widget.Toast.makeText(context, "PDF saved successfully", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                android.widget.Toast.makeText(context, "Failed to save PDF", android.widget.Toast.LENGTH_SHORT).show()
+            }
+            onNavigateBack()
+        } else {
+            onNavigateBack()
+        }
+    }
+
     // Direct Receipt Thermal-style Print Dialog
     if (showPrintReceiptDialog) {
         val sdf = SimpleDateFormat("dd-MMM-yyyy hh:mm a", Locale.getDefault())
@@ -1601,31 +1639,7 @@ fun NewVoucherScreen(
                     Button(
                         onClick = {
                             showPrintReceiptDialog = false
-                            try {
-                                val dateStr = sdf.format(Date(voucherDate))
-                                val itemsList = lineItems.toList()
-                                val pdfFile = PdfUtils.generatePdfInvoice(
-                                    context = context,
-                                    profile = profile,
-                                    voucherNo = voucherNo,
-                                    dateFormatted = dateStr,
-                                    partyName = selectedParty?.name ?: "Cash Customer",
-                                    paymentMode = paymentMode,
-                                    lineItems = itemsList,
-                                    taxable = taxableAmount.value,
-                                    cgst = cgst.value,
-                                    sgst = sgst.value,
-                                    igst = igst.value,
-                                    roundOff = roundOff.value,
-                                    net = netAmount.value
-                                )
-                                if (pdfFile != null) {
-                                    android.widget.Toast.makeText(context, "Saved invoice PDF directly to Local Storage Downloads", android.widget.Toast.LENGTH_LONG).show()
-                                }
-                            } catch (e: Exception) {
-                                e.printStackTrace()
-                            }
-                            onNavigateBack()
+                            createPdfLauncher.launch("Invoice_${voucherNo.replace("/", "_")}.pdf")
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Colors.primary)
                     ) {
