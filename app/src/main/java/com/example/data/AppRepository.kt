@@ -17,6 +17,16 @@ class AppRepository(private val db: AppDatabase) {
     val cashTransactions = db.bankCashDao().getCashTransactions()
     val bankTransactions = db.bankCashDao().getBankTransactions()
     val allTransactions = db.bankCashDao().getAllTransactions()
+    val receiptAllocations = db.receiptAllocationDao().getAllReceiptAllocations()
+    
+    // New Ledger & Bill Tracking flows
+    val ledgerAccounts = db.ledgerAccountDao().getAllLedgerAccounts()
+    val billsReceivable = db.billReceivableDao().getAllBills()
+
+    suspend fun insertAllocation(allocation: ReceiptAllocation) {
+        db.receiptAllocationDao().insertAllocation(allocation)
+        recalculateOutstandings()
+    }
 
     // Retrieve specific items
     fun getItemsForVoucher(voucherId: String): Flow<List<VoucherItem>> =
@@ -37,13 +47,86 @@ class AppRepository(private val db: AppDatabase) {
         return db.businessProfileDao().getProfileSync()
     }
 
-    // Party Operations
+    // New Ledger Account Operations
+    suspend fun getLedgerAccountById(id: String) = db.ledgerAccountDao().getLedgerAccountById(id)
+    suspend fun getLedgerAccountByName(name: String) = db.ledgerAccountDao().getLedgerAccountByName(name)
+    suspend fun insertLedgerAccount(account: LedgerAccount) = db.ledgerAccountDao().insertLedgerAccount(account)
+    suspend fun deleteLedgerAccount(id: String) = db.ledgerAccountDao().deleteLedgerAccount(id)
+
+    suspend fun seedLedgersIfEmpty() {
+        db.withTransaction {
+            val existing = db.ledgerAccountDao().getAllLedgerAccountsSync()
+            if (existing.isEmpty()) {
+                val systemLedgers = listOf(
+                    LedgerAccount(UUID.randomUUID().toString(), "Cash", "Cash-in-Hand", 0.0, "DR", 1, 0),
+                    LedgerAccount(UUID.randomUUID().toString(), "Bank", "Bank Accounts", 0.0, "DR", 1, 0),
+                    LedgerAccount(UUID.randomUUID().toString(), "Sales Account", "Sales Accounts", 0.0, "CR", 1, 0),
+                    LedgerAccount(UUID.randomUUID().toString(), "Sales Return", "Sales Accounts", 0.0, "DR", 1, 0),
+                    LedgerAccount(UUID.randomUUID().toString(), "Purchase Account", "Purchase Accounts", 0.0, "DR", 1, 0),
+                    LedgerAccount(UUID.randomUUID().toString(), "Purchase Return", "Purchase Accounts", 0.0, "CR", 1, 0),
+                    
+                    LedgerAccount(UUID.randomUUID().toString(), "CGST Payable", "Duties & Taxes", 0.0, "CR", 1, 0),
+                    LedgerAccount(UUID.randomUUID().toString(), "SGST Payable", "Duties & Taxes", 0.0, "CR", 1, 0),
+                    LedgerAccount(UUID.randomUUID().toString(), "IGST Payable", "Duties & Taxes", 0.0, "CR", 1, 0),
+                    LedgerAccount(UUID.randomUUID().toString(), "CGST Receivable", "Duties & Taxes", 0.0, "DR", 1, 0),
+                    LedgerAccount(UUID.randomUUID().toString(), "SGST Receivable", "Duties & Taxes", 0.0, "DR", 1, 0),
+                    LedgerAccount(UUID.randomUUID().toString(), "IGST Receivable", "Duties & Taxes", 0.0, "DR", 1, 0),
+                    
+                    LedgerAccount(UUID.randomUUID().toString(), "Round Off Account", "Indirect Expenses", 0.0, "DR", 1, 0),
+                    LedgerAccount(UUID.randomUUID().toString(), "Rent", "Indirect Expenses", 0.0, "DR", 1, 0),
+                    LedgerAccount(UUID.randomUUID().toString(), "Electricity", "Indirect Expenses", 0.0, "DR", 1, 0),
+                    LedgerAccount(UUID.randomUUID().toString(), "Discount Allowed", "Indirect Expenses", 0.0, "DR", 1, 0),
+                    LedgerAccount(UUID.randomUUID().toString(), "Discount Received", "Indirect Income", 0.0, "CR", 1, 0),
+                    LedgerAccount(UUID.randomUUID().toString(), "Freight Charges", "Direct Expenses", 0.0, "DR", 1, 0),
+                    LedgerAccount(UUID.randomUUID().toString(), "Salaries", "Direct Expenses", 0.0, "DR", 1, 0),
+                    LedgerAccount(UUID.randomUUID().toString(), "Capital Account", "Capital Account", 0.0, "CR", 1, 0)
+                )
+                db.ledgerAccountDao().insertLedgerAccounts(systemLedgers)
+            }
+        }
+    }
+
+    // Party Operations (Synchronized with Ledger Accounts)
     suspend fun insertParty(party: Party) {
-        db.partyDao().insertParty(party)
+        db.withTransaction {
+            db.partyDao().insertParty(party)
+            
+            // Sync with LedgerAccount
+            val existingAct = db.ledgerAccountDao().getLedgerAccountByPartyId(party.id)
+            val group = if (party.type == "CUSTOMER") "Sundry Debtors" else "Sundry Creditors"
+            val balanceType = if (party.type == "CUSTOMER") "DR" else "CR"
+            val act = existingAct?.copy(
+                name = party.name,
+                groupName = group,
+                openingBalance = party.openingBalance,
+                balanceType = balanceType,
+                gstin = party.gstin ?: "",
+                phone = party.phone ?: "",
+                email = party.email ?: "",
+                address = party.address ?: ""
+            ) ?: LedgerAccount(
+                id = UUID.randomUUID().toString(),
+                name = party.name,
+                groupName = group,
+                openingBalance = party.openingBalance,
+                balanceType = balanceType,
+                isSystem = 0,
+                isParty = 1,
+                partyId = party.id,
+                gstin = party.gstin ?: "",
+                phone = party.phone ?: "",
+                email = party.email ?: "",
+                address = party.address ?: ""
+            )
+            db.ledgerAccountDao().insertLedgerAccount(act)
+        }
     }
 
     suspend fun deleteParty(id: String) {
-        db.partyDao().deleteParty(id)
+        db.withTransaction {
+            db.partyDao().deleteParty(id)
+            db.ledgerAccountDao().deleteLedgerAccountByParty(id)
+        }
     }
 
     // Product Operations
@@ -599,6 +682,65 @@ class AppRepository(private val db: AppDatabase) {
                     )
                 )
             }
+
+            // 5. Auto-register Credit Sale under BillReceivable
+            if (voucher.type == "SALE" && voucher.paymentMode == "CREDIT" && voucher.partyId != null) {
+                val creditPeriodMs = 15L * 24L * 3600L * 1000L // 15 days credit term
+                val dueDateVal = voucher.date + creditPeriodMs
+                val bill = BillReceivable(
+                    id = UUID.randomUUID().toString(),
+                    voucherId = voucher.id,
+                    voucherNo = voucher.voucherNo,
+                    partyId = voucher.partyId,
+                    partyName = partyDesc,
+                    billDate = voucher.date,
+                    dueDate = dueDateVal,
+                    originalAmount = voucher.netAmount,
+                    paidAmount = 0.0,
+                    outstandingAmount = voucher.netAmount,
+                    status = "UNPAID",
+                    daysOverdue = 0,
+                    lastReminderDate = null,
+                    createdAt = System.currentTimeMillis()
+                )
+                db.billReceivableDao().insertBill(bill)
+            }
+
+            // 6. Recalculate everything
+            recalculateOutstandings()
+        }
+    }
+
+    suspend fun recalculateOutstandings() {
+        val bills = db.billReceivableDao().getAllBillsSync()
+        for (bill in bills) {
+            val billAllocations = db.receiptAllocationDao().getAllocationsForInvoiceSync(bill.voucherId)
+            val totalAllocated = billAllocations.sumOf { it.allocatedAmount }
+            val outstanding = maxOf(0.0, bill.originalAmount - totalAllocated)
+            
+            val status = if (outstanding <= 0.0) "PAID" else if (totalAllocated > 0.0) "PARTIAL" else {
+                if (bill.dueDate != null && System.currentTimeMillis() > bill.dueDate) "OVERDUE" else "UNPAID"
+            }
+            
+            val daysOverdue = if (outstanding > 0.0 && bill.dueDate != null && System.currentTimeMillis() > bill.dueDate) {
+                ((System.currentTimeMillis() - bill.dueDate) / (24L * 3600L * 1000L)).toInt()
+            } else {
+                0
+            }
+            
+            val updatedBill = bill.copy(
+                paidAmount = totalAllocated,
+                outstandingAmount = outstanding,
+                status = status,
+                daysOverdue = daysOverdue
+            )
+            db.billReceivableDao().insertBill(updatedBill)
+            
+            // Sync with Voucher
+            val v = db.voucherDao().getVoucherById(bill.voucherId)
+            if (v != null) {
+                db.voucherDao().insertVoucher(v.copy(outstandingAmount = outstanding))
+            }
         }
     }
 
@@ -608,6 +750,10 @@ class AppRepository(private val db: AppDatabase) {
             db.voucherItemDao().deleteItemsForVoucher(id)
             db.ledgerDao().deleteLedgerEntriesForVoucher(id)
             db.bankCashDao().deleteTransactionsByVoucher(id)
+            db.receiptAllocationDao().deleteAllocationsByReceipt(id)
+            db.receiptAllocationDao().deleteAllocationsByInvoice(id)
+            db.billReceivableDao().deleteBillByVoucherId(id)
+            recalculateOutstandings()
         }
     }
 
@@ -662,6 +808,7 @@ class AppRepository(private val db: AppDatabase) {
     }
 
     suspend fun insertSampleData() {
+        seedLedgersIfEmpty()
         db.withTransaction {
             // Drop tables state (can be destructive or append)
             // Customers

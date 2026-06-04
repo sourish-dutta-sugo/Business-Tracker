@@ -30,10 +30,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val vouchers: StateFlow<List<Voucher>>
     val ledgerEntries: StateFlow<List<LedgerEntry>>
     val transactions: StateFlow<List<BankCashTransaction>>
+    val receiptAllocations: StateFlow<List<ReceiptAllocation>>
+    
+    // New flows for ledgers & outstanding bills
+    val ledgerAccounts: StateFlow<List<LedgerAccount>>
+    val billsReceivable: StateFlow<List<BillReceivable>>
 
     // Current setup status
     val isSetupCompleted = MutableStateFlow(false)
-    val financialYear = MutableStateFlow("2026-27")
+    val financialYear = MutableStateFlow("2025-26")
 
     init {
         var tempRepo: AppRepository? = null
@@ -88,11 +93,55 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             initialValue = emptyList()
         )
 
+        receiptAllocations = repository.receiptAllocations.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+        ledgerAccounts = repository.ledgerAccounts.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+        billsReceivable = repository.billsReceivable.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+        // Seed standard Tally-prime ledgers if empty
+        viewModelScope.launch {
+            repository.seedLedgersIfEmpty()
+        }
+
         // Monitor if profile exists to lock/unlock Setup screen
         viewModelScope.launch {
             repository.profile.collect { prof ->
                 isSetupCompleted.value = prof != null
+                if (prof != null) {
+                    financialYear.value = prof.fyLabel
+                }
             }
+        }
+    }
+
+    fun insertAllocation(allocation: ReceiptAllocation) {
+        viewModelScope.launch {
+            repository.insertAllocation(allocation)
+        }
+    }
+
+    fun insertLedgerAccount(account: LedgerAccount) {
+        viewModelScope.launch {
+            repository.insertLedgerAccount(account)
+        }
+    }
+
+    fun deleteLedgerAccount(id: String) {
+        viewModelScope.launch {
+            repository.deleteLedgerAccount(id)
         }
     }
 

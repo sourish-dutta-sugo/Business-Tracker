@@ -22,7 +22,10 @@ data class BusinessProfile(
     val ifsc: String,
     val logoPath: String? = null,
     val signaturePath: String? = null,
-    val fyStart: String = "01-04", // dd-MM format
+    val fyStartMonth: Int = 4,
+    val fyStartYear: Int = 2025,
+    val fyEndYear: Int = 2026,
+    val fyLabel: String = "2025-26",
     val createdAt: Long = System.currentTimeMillis()
 )
 
@@ -83,6 +86,7 @@ data class Voucher(
     val bankNameDetail: String? = null,
     val memoNumber: String? = null,
     val branchName: String? = null,
+    val outstandingAmount: Double = 0.0,
     val createdAt: Long = System.currentTimeMillis()
 )
 
@@ -134,3 +138,48 @@ data class BankCashTransaction(
     val receiptImagePath: String? = null,
     val createdAt: Long = System.currentTimeMillis()
 )
+
+@Entity(tableName = "receipt_allocations")
+data class ReceiptAllocation(
+    @PrimaryKey val id: String, // UUID
+    val receiptId: String, // Voucher ID of RECEIPT or PAYMENT voucher
+    val invoiceId: String, // Voucher ID of SALE or PURCHASE voucher
+    val allocatedAmount: Double,
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "ledger_accounts")
+data class LedgerAccount(
+    @PrimaryKey val id: String, // UUID
+    val name: String,
+    val groupName: String,
+    val openingBalance: Double = 0.0,
+    val balanceType: String = "DR", // "DR" or "CR"
+    val isSystem: Int = 0, // 0=no, 1=yes
+    val isParty: Int = 0, // 0=no, 1=yes
+    val partyId: String? = null,
+    val gstin: String = "",
+    val phone: String = "",
+    val email: String = "",
+    val address: String = "",
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "bills_receivable")
+data class BillReceivable(
+    @PrimaryKey val id: String, // UUID
+    val voucherId: String,
+    val voucherNo: String?,
+    val partyId: String,
+    val partyName: String?,
+    val billDate: Long,
+    val dueDate: Long?,
+    val originalAmount: Double = 0.0,
+    val paidAmount: Double = 0.0,
+    val outstandingAmount: Double = 0.0,
+    val status: String = "UNPAID", // UNPAID / PARTIAL / PAID / OVERDUE
+    val daysOverdue: Int = 0,
+    val lastReminderDate: Long? = null,
+    val createdAt: Long = System.currentTimeMillis()
+)
+

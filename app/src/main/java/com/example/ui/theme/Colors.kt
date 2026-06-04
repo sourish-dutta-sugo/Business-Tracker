@@ -7,33 +7,43 @@ object Colors {
     val primaryText = Color(0xFFFFFFFF)
     val primaryDark = Color(0xFF1557B0)
     val primaryLight = Color(0xFFE8F0FE)
-    val background = Color(0xFFF5F5F5)
+
+    // Backgrounds & Surfaces
+    val background = Color(0xFFF2F4F7) // screenBg
     val surface = Color(0xFFFFFFFF)
-    val border = Color(0xFFE0E0E0)
-    val divider = Color(0xFFF0F0F0)
-    val textPrimary = Color(0xFF0F172A)
-    val textSecondary = Color(0xFF1E293B)
-    val textTertiary = Color(0xFF334155)
+    val cardBackground = Color(0xFFFFFFFF) // cardBg
+    val cardBorder = Color(0xFFE0E4EA)
+    val headerBackground = Color(0xFFFFFFFF) // headerBg
+    val headerText = Color(0xFF0D0D0D)
+    val tabBarBackground = Color(0xFFFFFFFF) // tabBarBg
+    val border = Color(0xFFE0E4EA) // border
+    val divider = Color(0xFFE0E4EA)
+
+    // Texts
+    val textPrimary = Color(0xFF0D0D0D) // textPrimary
+    val textSecondary = Color(0xFF555555) // textSecondary
+    val textTertiary = Color(0xFFAAAAAA) // textTertiary
     val textOnPrimary = Color(0xFFFFFFFF)
-    val inputBackground = Color(0xFFFFFFFF)
-    val inputText = Color(0xFF0F172A)
-    val inputPlaceholder = Color(0xFF334155)
-    val inputBorder = Color(0xFFCBD5E1)
+    val labelText = Color(0xFF444444) // labelText
+
+    // Inputs
+    val inputBackground = Color(0xFFFFFFFF) // inputBg
+    val inputText = Color(0xFF0D0D0D) // inputText
+    val inputPlaceholder = Color(0xFFAAAAAA) // inputPlaceholder
+    val inputBorder = Color(0xFFE0E4EA) // border
     val inputBorderFocus = Color(0xFF1A73E8)
-    val labelText = Color(0xFF1E293B)
-    val headerBackground = Color(0xFFFFFFFF)
-    val headerText = Color(0xFF1A1A1A)
-    val cardBackground = Color(0xFFFFFFFF)
-    val cardBorder = Color(0xFFEEEEEE)
-    val tabBarBackground = Color(0xFFFFFFFF)
-    val tabBarActive = Color(0xFF1A73E8)
-    val tabBarInactive = Color(0xFFAAAAAA)
-    val success = Color(0xFF28A745)
-    val danger = Color(0xFFDC3545)
+
+    // Status colors
+    val success = Color(0xFF1976D2) // success
+    val danger = Color(0xFFD32F2F) // danger
     val warning = Color(0xFFFFA500)
     val info = Color(0xFF17A2B8)
-    val drBalance = Color(0xFFDC3545)
-    val crBalance = Color(0xFF28A745)
+
+    // Tally balance highlights
+    val drBalance = Color(0xFFD32F2F) // Debit: Red
+    val crBalance = Color(0xFF28A745) // Credit: Green
+
+    // Badges remaining:
     val badgeSale = Color(0xFFE8F5E9)
     val badgeSaleText = Color(0xFF2E7D32)
     val badgePurchase = Color(0xFFFFF3E0)

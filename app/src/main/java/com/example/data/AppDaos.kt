@@ -119,3 +119,79 @@ interface BankCashDao {
     @Query("DELETE FROM bank_cash_transactions WHERE narration LIKE '%' || :voucherId || '%'")
     suspend fun deleteTransactionsByVoucher(voucherId: String)
 }
+
+@Dao
+interface ReceiptAllocationDao {
+    @Query("SELECT * FROM receipt_allocations WHERE receiptId = :receiptId")
+    fun getAllocationsForReceipt(receiptId: String): Flow<List<ReceiptAllocation>>
+
+    @Query("SELECT * FROM receipt_allocations")
+    fun getAllReceiptAllocations(): Flow<List<ReceiptAllocation>>
+
+    @Query("SELECT * FROM receipt_allocations WHERE invoiceId = :invoiceId")
+    suspend fun getAllocationsForInvoiceSync(invoiceId: String): List<ReceiptAllocation>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAllocation(allocation: ReceiptAllocation)
+
+    @Query("DELETE FROM receipt_allocations WHERE receiptId = :receiptId")
+    suspend fun deleteAllocationsByReceipt(receiptId: String)
+
+    @Query("DELETE FROM receipt_allocations WHERE invoiceId = :invoiceId")
+    suspend fun deleteAllocationsByInvoice(invoiceId: String)
+}
+
+@Dao
+interface LedgerAccountDao {
+    @Query("SELECT * FROM ledger_accounts ORDER BY name ASC")
+    fun getAllLedgerAccounts(): Flow<List<LedgerAccount>>
+
+    @Query("SELECT * FROM ledger_accounts ORDER BY name ASC")
+    suspend fun getAllLedgerAccountsSync(): List<LedgerAccount>
+
+    @Query("SELECT * FROM ledger_accounts WHERE id = :id LIMIT 1")
+    suspend fun getLedgerAccountById(id: String): LedgerAccount?
+
+    @Query("SELECT * FROM ledger_accounts WHERE name = :name LIMIT 1")
+    suspend fun getLedgerAccountByName(name: String): LedgerAccount?
+
+    @Query("SELECT * FROM ledger_accounts WHERE partyId = :partyId LIMIT 1")
+    suspend fun getLedgerAccountByPartyId(partyId: String): LedgerAccount?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertLedgerAccount(account: LedgerAccount)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertLedgerAccounts(accounts: List<LedgerAccount>)
+
+    @Query("UPDATE ledger_accounts SET openingBalance = :balance WHERE id = :id")
+    suspend fun updateOpeningBalance(id: String, balance: Double)
+
+    @Query("DELETE FROM ledger_accounts WHERE id = :id")
+    suspend fun deleteLedgerAccount(id: String)
+    
+    @Query("DELETE FROM ledger_accounts WHERE partyId = :partyId")
+    suspend fun deleteLedgerAccountByParty(partyId: String)
+}
+
+@Dao
+interface BillReceivableDao {
+    @Query("SELECT * FROM bills_receivable ORDER BY billDate DESC")
+    fun getAllBills(): Flow<List<BillReceivable>>
+
+    @Query("SELECT * FROM bills_receivable ORDER BY billDate DESC")
+    suspend fun getAllBillsSync(): List<BillReceivable>
+
+    @Query("SELECT * FROM bills_receivable WHERE voucherId = :voucherId LIMIT 1")
+    suspend fun getBillByVoucherId(voucherId: String): BillReceivable?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertBill(bill: BillReceivable)
+
+    @Query("DELETE FROM bills_receivable WHERE voucherId = :voucherId")
+    suspend fun deleteBillByVoucherId(voucherId: String)
+
+    @Query("DELETE FROM bills_receivable")
+    suspend fun deleteAllBills()
+}
+
