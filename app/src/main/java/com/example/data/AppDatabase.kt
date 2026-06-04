@@ -13,9 +13,12 @@ import androidx.room.RoomDatabase
         Voucher::class,
         VoucherItem::class,
         LedgerEntry::class,
-        BankCashTransaction::class
+        BankCashTransaction::class,
+        ReceiptAllocation::class,
+        LedgerAccount::class,
+        BillReceivable::class
     ],
-    version = 2,
+    version = 4,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -26,6 +29,9 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun voucherItemDao(): VoucherItemDao
     abstract fun ledgerDao(): LedgerDao
     abstract fun bankCashDao(): BankCashDao
+    abstract fun receiptAllocationDao(): ReceiptAllocationDao
+    abstract fun ledgerAccountDao(): LedgerAccountDao
+    abstract fun billReceivableDao(): BillReceivableDao
 
     companion object {
         @Volatile
