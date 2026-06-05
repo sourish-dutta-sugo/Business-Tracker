@@ -50,6 +50,7 @@ import java.util.Locale
 @Composable
 fun DashboardScreen(
     viewModel: AppViewModel,
+    isDesktop: Boolean = false,
     onQuickAction: (String) -> Unit // "SALE", "PURCHASE", "RECEIPT", "PAYMENT"
 ) {
     val vouchers by viewModel.vouchers.collectAsState()
@@ -368,7 +369,8 @@ fun DashboardScreen(
             )
 
             // Render card structure cleanly without nesting LazyVerticalGrid inside a scrollable Column
-            val kpiChunks = cardList.chunked(2)
+            val chunkSize = if (isDesktop) 4 else 2
+            val kpiChunks = cardList.chunked(chunkSize)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 kpiChunks.forEach { pair ->
                     Row(
@@ -380,8 +382,8 @@ fun DashboardScreen(
                                 KpiCard(card)
                             }
                         }
-                        if (pair.size < 2) {
-                            Spacer(modifier = Modifier.weight(1f))
+                        if (pair.size < chunkSize) {
+                            Spacer(modifier = Modifier.weight((chunkSize - pair.size).toFloat()))
                         }
                     }
                 }
@@ -389,78 +391,164 @@ fun DashboardScreen(
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            // Custom Native Visual Chart 1: Sales vs Purchases Bar Chart (Last 6 Months)
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .border(1.dp, Color(0xFFE8E8E8), RoundedCornerShape(16.dp)),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFF8F9FA))
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+            if (isDesktop) {
+                // Desktop Side-by-Side row containing weekly sales and net cash flow trend charts
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Card(
+                        modifier = Modifier
+                            .weight(1f)
+                            .border(1.dp, Color(0xFFE8E8E8), RoundedCornerShape(16.dp)),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFF8F9FA))
                     ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Weekly Sales (6 months)",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF1A1A1A)
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .background(Color(0xFFE3F2FD), RoundedCornerShape(12.dp))
+                                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = "VIEW REPORT",
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF1A73E8)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(12.dp))
+                            SalesPurchasesBarChart(vouchers)
+                        }
+                    }
+
+                    Card(
+                        modifier = Modifier
+                            .weight(1f)
+                            .border(1.dp, Color(0xFFE8E8E8), RoundedCornerShape(16.dp)),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFF8F9FA))
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                text = "Net Cash Flow Trend (Last 30 Days)",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF1A1A1A)
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            CashFlowLineChart(vouchers)
+                        }
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Card(
+                        modifier = Modifier
+                            .weight(1f)
+                            .border(1.dp, Color(0xFFE8E8E8), RoundedCornerShape(16.dp)),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFF8F9FA))
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                text = "GST Collected Liabilities Breakdown",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF1A1A1A)
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            GstPieChart(vouchers)
+                        }
+                    }
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+            } else {
+                // Custom Native Visual Chart 1: Sales vs Purchases Bar Chart (Last 6 Months)
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, Color(0xFFE8E8E8), RoundedCornerShape(16.dp)),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF8F9FA))
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Weekly Sales (6 months)",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF1A1A1A)
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .background(Color(0xFFE3F2FD), RoundedCornerShape(12.dp))
+                                    .padding(horizontal = 8.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = "VIEW REPORT",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF1A73E8)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        SalesPurchasesBarChart(vouchers)
+                    }
+                }
+
+                // Custom Chart 2: Daily Cash Flow Line Chart (Last 30 Days)
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, Color(0xFFE8E8E8), RoundedCornerShape(16.dp)),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF8F9FA))
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
                         Text(
-                            text = "Weekly Sales (6 months)",
+                            text = "Net Cash Flow Trend (Last 30 Days)",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF1A1A1A)
                         )
-                        Box(
-                            modifier = Modifier
-                                .background(Color(0xFFE3F2FD), RoundedCornerShape(12.dp))
-                                .padding(horizontal = 8.dp, vertical = 2.dp)
-                        ) {
-                            Text(
-                                text = "VIEW REPORT",
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF1A73E8)
-                            )
-                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        CashFlowLineChart(vouchers)
                     }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    SalesPurchasesBarChart(vouchers)
                 }
-            }
 
-            // Custom Chart 2: Daily Cash Flow Line Chart (Last 30 Days)
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .border(1.dp, Color(0xFFE8E8E8), RoundedCornerShape(16.dp)),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFF8F9FA))
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "Net Cash Flow Trend (Last 30 Days)",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF1A1A1A)
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    CashFlowLineChart(vouchers)
-                }
-            }
-
-            // Custom Chart 3: GST Liability Breakdown (CGST / SGST / IGST)
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .border(1.dp, Color(0xFFE8E8E8), RoundedCornerShape(16.dp)),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFF8F9FA))
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "GST Collected Liabilities Breakdown",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF1A1A1A)
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    GstPieChart(vouchers)
+                // Custom Chart 3: GST Liability Breakdown (CGST / SGST / IGST)
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, Color(0xFFE8E8E8), RoundedCornerShape(16.dp)),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF8F9FA))
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "GST Collected Liabilities Breakdown",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF1A1A1A)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        GstPieChart(vouchers)
+                    }
                 }
             }
 

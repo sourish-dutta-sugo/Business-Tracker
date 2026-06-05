@@ -43,6 +43,7 @@ import java.util.UUID
 @Composable
 fun PartiesScreen(
     viewModel: AppViewModel,
+    isDesktop: Boolean = false,
     onPartySelected: (String) -> Unit
 ) {
     val parties by viewModel.parties.collectAsState()
@@ -75,165 +76,351 @@ fun PartiesScreen(
         }
     }
 
-    if (showAddPartyForm) {
-        AddPartyForm(
-            viewModel = viewModel,
-            onDismiss = { showAddPartyForm = false }
-        )
-    } else {
-        Scaffold(
-            floatingActionButton = {
-                FloatingActionButton(
-                    onClick = { showAddPartyForm = true },
-                    containerColor = Colors.primary,
-                    contentColor = Colors.primaryText,
-                    modifier = Modifier.testTag("add_party_fab")
-                ) {
-                    Icon(imageVector = Icons.Default.Add, contentDescription = "Add Party")
-                }
-            }
-        ) { innerPadding ->
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Colors.background)
-                    .padding(innerPadding)
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Text(
-                    text = "Parties",
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Colors.textPrimary
-                )
+    var selectedPartyId by remember { mutableStateOf<String?>(null) }
 
-                // Search Box using RetailTextField
-                RetailTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    label = "Search Parties",
-                    placeholder = "Search by name, phone or GSTIN...",
-                    trailingIcon = { Icon(imageVector = Icons.Default.Search, contentDescription = null, tint = Colors.textSecondary) },
-                    modifier = Modifier.fillMaxWidth().testTag("party_search_bar")
-                )
+    LaunchedEffect(filteredParties, isDesktop) {
+        if (isDesktop && selectedPartyId == null && filteredParties.isNotEmpty()) {
+            selectedPartyId = filteredParties.first().id
+        }
+    }
 
-                // Filter Buttons Row
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    val filters = listOf("ALL", "CUSTOMER", "SUPPLIER")
-                    filters.forEach { filter ->
-                        FilterChip(
-                            selected = selectedTypeFilter == filter,
-                            onClick = { selectedTypeFilter = filter },
-                            label = { Text(filter, fontSize = 11.sp) },
-                            shape = RoundedCornerShape(4.dp),
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = Colors.primary,
-                                selectedLabelColor = Colors.primaryText
-                            )
-                        )
-                    }
-                }
-
-                if (parties.isEmpty()) {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.padding(32.dp)
+    if (isDesktop) {
+        Row(modifier = Modifier.fillMaxSize()) {
+            // Master Pane (Parties List)
+            Box(modifier = Modifier.width(360.dp).fillMaxHeight()) {
+                Scaffold(
+                    floatingActionButton = {
+                        FloatingActionButton(
+                            onClick = { showAddPartyForm = true },
+                            containerColor = Colors.primary,
+                            contentColor = Colors.primaryText,
+                            modifier = Modifier.testTag("add_party_fab")
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Person,
-                                contentDescription = null,
-                                tint = Colors.textTertiary,
-                                modifier = Modifier.size(56.dp)
-                            )
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Text(
-                                text = "No parties added yet. Tap + to add.",
-                                color = Colors.textPrimary,
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Medium,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                            )
+                            Icon(imageVector = Icons.Default.Add, contentDescription = "Add Party")
                         }
                     }
-                } else if (filteredParties.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("No matching parties found.", color = Colors.textSecondary, fontSize = 14.sp)
-                    }
-                } else {
-                    LazyColumn(
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.fillMaxSize()
+                ) { innerPadding ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Colors.background)
+                            .padding(innerPadding)
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        items(filteredParties) { party ->
-                            val currentBal = partyBalances[party.id] ?: 0.0
+                        Text(
+                            text = "Parties",
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Colors.textPrimary
+                        )
 
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .border(1.dp, Colors.border, RoundedCornerShape(16.dp))
-                                    .clickable { onPartySelected(party.id) },
-                                colors = CardDefaults.cardColors(containerColor = Colors.cardBackground)
+                        // Search Box using RetailTextField
+                        RetailTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            label = "Search Parties",
+                            placeholder = "Search by name...",
+                            trailingIcon = { Icon(imageVector = Icons.Default.Search, contentDescription = null, tint = Colors.textSecondary) },
+                            modifier = Modifier.fillMaxWidth().testTag("party_search_bar")
+                        )
+
+                        // Filter Buttons Row
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            val filters = listOf("ALL", "CUSTOMER", "SUPPLIER")
+                            filters.forEach { filter ->
+                                FilterChip(
+                                    selected = selectedTypeFilter == filter,
+                                    onClick = { selectedTypeFilter = filter },
+                                    label = { Text(filter, fontSize = 9.sp) },
+                                    shape = RoundedCornerShape(4.dp),
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = Colors.primary,
+                                        selectedLabelColor = Colors.primaryText
+                                    )
+                                )
+                            }
+                        }
+
+                        if (filteredParties.isEmpty()) {
+                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Text("No matching parties found.", color = Colors.textSecondary, fontSize = 14.sp)
+                            }
+                        } else {
+                            LazyColumn(
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxSize()
                             ) {
-                                Row(
-                                    modifier = Modifier.padding(14.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1.2f)) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Text(
-                                                text = party.name,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 14.sp,
-                                                color = Colors.textPrimary
+                                items(filteredParties) { party ->
+                                    val currentBal = partyBalances[party.id] ?: 0.0
+                                    val isSelected = selectedPartyId == party.id
+
+                                    Card(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .border(
+                                                1.dp,
+                                                if (isSelected) Colors.primary else Colors.border,
+                                                RoundedCornerShape(16.dp)
                                             )
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Card(
-                                                colors = CardDefaults.cardColors(containerColor = Color(0xFFFAF0F1)),
-                                                shape = RoundedCornerShape(2.dp)
+                                            .clickable { selectedPartyId = party.id; showAddPartyForm = false },
+                                        colors = CardDefaults.cardColors(
+                                            containerColor = if (isSelected) Colors.primary.copy(alpha = 0.08f) else Colors.cardBackground
+                                        )
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(12.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(modifier = Modifier.weight(1.2f)) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Text(
+                                                        text = party.name,
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 12.sp,
+                                                        color = Colors.textPrimary
+                                                    )
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Card(
+                                                        colors = CardDefaults.cardColors(containerColor = Color(0xFFFAF0F1)),
+                                                        shape = RoundedCornerShape(2.dp)
+                                                    ) {
+                                                        Text(
+                                                            text = party.type,
+                                                            fontSize = 8.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = Colors.primary,
+                                                            modifier = Modifier.padding(horizontal = 2.dp, vertical = 1.dp)
+                                                        )
+                                                    }
+                                                }
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                Text(text = "Phone: ${party.phone}", fontSize = 10.sp, color = Colors.textSecondary)
+                                            }
+
+                                            Column(
+                                                horizontalAlignment = Alignment.End,
+                                                modifier = Modifier.weight(0.8f)
                                             ) {
+                                                val displayBal = Utils.formatIndianCurrency(Math.abs(currentBal))
+                                                val balLabel = if (currentBal >= 0) "DR" else "CR"
+                                                val balColor = if (currentBal >= 0) DangerRed else SuccessGreen
+
                                                 Text(
-                                                    text = party.type,
-                                                    fontSize = 9.sp,
+                                                    text = displayBal,
                                                     fontWeight = FontWeight.Bold,
-                                                    color = Colors.primary,
-                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                                    fontSize = 12.sp,
+                                                    color = balColor
+                                                )
+                                                Text(
+                                                    text = balLabel,
+                                                    fontSize = 8.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Colors.textSecondary
                                                 )
                                             }
                                         }
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text(text = "Phone: ${party.phone}", fontSize = 12.sp, color = Colors.textSecondary)
-                                        Text(text = "GSTIN: ${party.gstin ?: "Unregistered (B2C)"}", fontSize = 11.sp, color = Colors.textSecondary)
                                     }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
-                                    Column(
-                                        horizontalAlignment = Alignment.End,
-                                        modifier = Modifier.weight(0.8f)
+            // Detail Pane
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .padding(8.dp)
+            ) {
+                if (showAddPartyForm) {
+                    AddPartyForm(
+                        viewModel = viewModel,
+                        onDismiss = { showAddPartyForm = false }
+                    )
+                } else {
+                    selectedPartyId?.let { pId ->
+                        PartyDetailScreen(
+                            viewModel = viewModel,
+                            partyId = pId,
+                            onNavigateBack = { selectedPartyId = null }
+                        )
+                    } ?: Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("Select a party to see detailed layout.", color = Colors.textSecondary)
+                    }
+                }
+            }
+        }
+    } else {
+        if (showAddPartyForm) {
+            AddPartyForm(
+                viewModel = viewModel,
+                onDismiss = { showAddPartyForm = false }
+            )
+        } else {
+            Scaffold(
+                floatingActionButton = {
+                    FloatingActionButton(
+                        onClick = { showAddPartyForm = true },
+                        containerColor = Colors.primary,
+                        contentColor = Colors.primaryText,
+                        modifier = Modifier.testTag("add_party_fab")
+                    ) {
+                        Icon(imageVector = Icons.Default.Add, contentDescription = "Add Party")
+                    }
+                }
+            ) { innerPadding ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Colors.background)
+                        .padding(innerPadding)
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "Parties",
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Colors.textPrimary
+                    )
+
+                    // Search Box using RetailTextField
+                    RetailTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        label = "Search Parties",
+                        placeholder = "Search by name, phone or GSTIN...",
+                        trailingIcon = { Icon(imageVector = Icons.Default.Search, contentDescription = null, tint = Colors.textSecondary) },
+                        modifier = Modifier.fillMaxWidth().testTag("party_search_bar")
+                    )
+
+                    // Filter Buttons Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        val filters = listOf("ALL", "CUSTOMER", "SUPPLIER")
+                        filters.forEach { filter ->
+                            FilterChip(
+                                selected = selectedTypeFilter == filter,
+                                onClick = { selectedTypeFilter = filter },
+                                label = { Text(filter, fontSize = 11.sp) },
+                                shape = RoundedCornerShape(4.dp),
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Colors.primary,
+                                    selectedLabelColor = Colors.primaryText
+                                )
+                            )
+                        }
+                    }
+
+                    if (parties.isEmpty()) {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.padding(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Person,
+                                    contentDescription = null,
+                                    tint = Colors.textTertiary,
+                                    modifier = Modifier.size(56.dp)
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text(
+                                    text = "No parties added yet. Tap + to add.",
+                                    color = Colors.textPrimary,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                            }
+                        }
+                    } else if (filteredParties.isEmpty()) {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text("No matching parties found.", color = Colors.textSecondary, fontSize = 14.sp)
+                        }
+                    } else {
+                        LazyColumn(
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            items(filteredParties) { party ->
+                                val currentBal = partyBalances[party.id] ?: 0.0
+
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .border(1.dp, Colors.border, RoundedCornerShape(16.dp))
+                                        .clickable { onPartySelected(party.id) },
+                                    colors = CardDefaults.cardColors(containerColor = Colors.cardBackground)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(14.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        val displayBal = Utils.formatIndianCurrency(Math.abs(currentBal))
-                                        val balLabel = if (currentBal >= 0) "DR (Receivable)" else "CR (Payable)"
-                                        val balColor = if (currentBal >= 0) DangerRed else SuccessGreen
+                                        Column(modifier = Modifier.weight(1.2f)) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(
+                                                    text = party.name,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 14.sp,
+                                                    color = Colors.textPrimary
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Card(
+                                                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFAF0F1)),
+                                                    shape = RoundedCornerShape(2.dp)
+                                                ) {
+                                                    Text(
+                                                        text = party.type,
+                                                        fontSize = 9.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Colors.primary,
+                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                                    )
+                                                }
+                                            }
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(text = "Phone: ${party.phone}", fontSize = 12.sp, color = Colors.textSecondary)
+                                            Text(text = "GSTIN: ${party.gstin ?: "Unregistered (B2C)"}", fontSize = 11.sp, color = Colors.textSecondary)
+                                        }
 
-                                        Text(
-                                            text = displayBal,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 14.sp,
-                                            color = balColor
-                                        )
-                                        Text(
-                                            text = balLabel,
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Colors.textSecondary
-                                        )
+                                        Column(
+                                            horizontalAlignment = Alignment.End,
+                                            modifier = Modifier.weight(0.8f)
+                                        ) {
+                                            val displayBal = Utils.formatIndianCurrency(Math.abs(currentBal))
+                                            val balLabel = if (currentBal >= 0) "DR (Receivable)" else "CR (Payable)"
+                                            val balColor = if (currentBal >= 0) DangerRed else SuccessGreen
+
+                                            Text(
+                                                text = displayBal,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 14.sp,
+                                                color = balColor
+                                            )
+                                            Text(
+                                                text = balLabel,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Colors.textSecondary
+                                            )
+                                        }
                                     }
                                 }
                             }
