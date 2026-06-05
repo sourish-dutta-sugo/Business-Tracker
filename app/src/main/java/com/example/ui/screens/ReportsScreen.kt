@@ -42,6 +42,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun ReportsScreen(
     viewModel: AppViewModel,
+    isDesktop: Boolean = false,
     onNavigateBack: () -> Unit
 ) {
     val profile by viewModel.profile.collectAsState()
@@ -49,7 +50,7 @@ fun ReportsScreen(
     val parties by viewModel.parties.collectAsState()
     val products by viewModel.products.collectAsState()
 
-    var activeReport by remember { mutableStateOf("MENU") } // "MENU", "TRIAL", "PL", "BALANCE", "GST", "RECEIVABLES", "PAYABLES"
+    var activeReport by remember { mutableStateOf(if (isDesktop) "TRIAL" else "MENU") }
 
     val context = LocalContext.current
 
@@ -99,263 +100,486 @@ fun ReportsScreen(
         Triple(balances, debtors.sortedByDescending { it.second }, creditors.sortedByDescending { it.second })
     }
 
-    if (activeReport == "MENU") {
-        Scaffold(
-            topBar = {
-                TopAppBar(
-                    title = { Text("Regulatory Financial Books & GST Reports", fontWeight = FontWeight.Black, color = Colors.textPrimary) },
-                    navigationIcon = {
-                        IconButton(onClick = onNavigateBack) {
-                            Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = Colors.textPrimary)
+    // Compute shared balances & items
+    val currentStockValue = remember(products) {
+        products.sumOf { it.openingStock * it.purchaseRate }
+    }
+
+    val salesRevenue = Math.abs(ledgerBalances["Sales Account"] ?: 0.0)
+    val purchasesCost = ledgerBalances["Purchases Account"] ?: 0.0
+
+    val cgstPayable = ledgerBalances["CGST Payable"] ?: 0.0
+    val sgstPayable = ledgerBalances["SGST Payable"] ?: 0.0
+    val igstPayable = ledgerBalances["IGST Payable"] ?: 0.0
+
+    val cgstRec = ledgerBalances["CGST Receivable"] ?: 0.0
+    val sgstRec = ledgerBalances["SGST Receivable"] ?: 0.0
+    val igstRec = ledgerBalances["IGST Receivable"] ?: 0.0
+
+    val outputTaxTotal = cgstPayable + sgstPayable + igstPayable
+    val inputTaxCredit = cgstRec + sgstRec + igstRec
+    val netGstBalance = outputTaxTotal - inputTaxCredit
+
+    val roundOffValue = ledgerBalances["Round Off Account"] ?: 0.0
+
+    // P&L Calculations
+    val tradingDebit = purchasesCost
+    val tradingCredit = salesRevenue + currentStockValue
+    val grossProfit = tradingCredit - tradingDebit
+
+    val netProfit = grossProfit - (if (roundOffValue > 0) roundOffValue else 0.0)
+
+    // Assets and liabilities calculations for Balance Sheet
+    val cashVal = ledgerBalances["Cash"] ?: 0.0
+    val bankVal = ledgerBalances["Bank"] ?: 0.0
+    val totalDebtors = debtorsList.sumOf { it.second }
+    val totalCreditors = creditorsList.sumOf { it.second }
+
+    val assetsDuties = if (netGstBalance < 0.0) -netGstBalance else 0.0
+    val liabilitiesDuties = if (netGstBalance > 0.0) netGstBalance else 0.0
+
+    val totalAssets = cashVal + bankVal + totalDebtors + currentStockValue + assetsDuties
+    val otherLiabilities = totalCreditors + liabilitiesDuties
+    val balancingCapitalEquity = totalAssets - otherLiabilities
+
+    if (isDesktop) {
+        Row(modifier = Modifier.fillMaxSize()) {
+            // Left menu pane
+            Box(modifier = Modifier.width(360.dp).fillMaxHeight()) {
+                Scaffold(
+                    topBar = {
+                        TopAppBar(
+                            title = { Text("Regulatory Financial Books", fontWeight = FontWeight.Bold) },
+                            colors = TopAppBarDefaults.topAppBarColors(containerColor = Colors.cardBackground)
+                        )
+                    }
+                ) { innerPadding ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Colors.background)
+                            .verticalScroll(rememberScrollState())
+                            .padding(innerPadding)
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = "Reports Menu (${viewModel.financialYear.value})",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Colors.textSecondary
+                        )
+
+                        val reportsList = listOf(
+                            Triple("TRIAL", "Trial Balance", "Interactive Net Debits & Credits verification"),
+                            Triple("PL", "Profit & Loss Account", "Gross Margin & Net P&L side-by-side"),
+                            Triple("BALANCE", "Balance Sheet", "Real assets, liabilities & equity distribution"),
+                            Triple("GST", "GST Summary Status", "Tax output liability offset against Input credits"),
+                            Triple("RECEIVABLES", "Outstanding Receivables", "Automated customer aging list & alerts"),
+                            Triple("PAYABLES", "Outstanding Payables", "Supplier credit balances status")
+                        )
+
+                        reportsList.forEach { (type, name, desc) ->
+                            val isSelected = activeReport == type
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .border(
+                                        1.dp,
+                                        if (isSelected) Colors.primary else Colors.border,
+                                        RoundedCornerShape(12.dp)
+                                    )
+                                    .clickable { activeReport = type },
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (isSelected) Colors.primary.copy(alpha = 0.08f) else Colors.cardBackground
+                                )
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Text(
+                                        text = name,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = if (isSelected) Colors.primary else Colors.textPrimary
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = desc,
+                                        fontSize = 10.sp,
+                                        color = Colors.textSecondary
+                                    )
+                                }
+                            }
                         }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Colors.cardBackground)
-                )
+                    }
+                }
             }
-        ) { innerPadding ->
-            Column(
+
+            // Right Detail view pane
+            Box(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .background(Colors.background)
-                    .verticalScroll(rememberScrollState())
-                    .padding(innerPadding)
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .padding(8.dp)
             ) {
-                Text(
-                    text = "Double Entry Ledger Reports Summary (${viewModel.financialYear.value})",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 13.sp,
-                    color = Colors.textSecondary
-                )
+                Scaffold(
+                    topBar = {
+                        TopAppBar(
+                            title = {
+                                Column {
+                                    Text(
+                                        text = when (activeReport) {
+                                            "TRIAL" -> "Trial Balance"
+                                            "PL" -> "Trading & Profit & Loss Statement"
+                                            "BALANCE" -> "Balance Sheet Statement"
+                                            "GST" -> "GST Register Summary"
+                                            "RECEIVABLES" -> "Outstanding Receivables Ledger"
+                                            "PAYABLES" -> "Outstanding Payables Ledger"
+                                            else -> activeReport
+                                        },
+                                        fontWeight = FontWeight.Bold,
+                                        color = Colors.textPrimary,
+                                        fontSize = 16.sp
+                                    )
+                                    Text(
+                                        text = "ZeroBook • Financial Year ${viewModel.financialYear.value}",
+                                        fontSize = 11.sp,
+                                        color = Colors.textTertiary
+                                    )
+                                }
+                            },
+                            colors = TopAppBarDefaults.topAppBarColors(containerColor = Colors.cardBackground)
+                        )
+                    }
+                ) { innerPadding ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Colors.background)
+                            .padding(innerPadding)
+                            .padding(16.dp)
+                    ) {
+                        when (activeReport) {
+                            "TRIAL" -> {
+                                TrialBalanceView(
+                                    ledgerBalances = ledgerBalances,
+                                    debtorsList = debtorsList,
+                                    creditorsList = creditorsList,
+                                    currentStockValue = currentStockValue,
+                                    roundOffValue = roundOffValue,
+                                    salesRevenue = salesRevenue,
+                                    purchasesCost = purchasesCost,
+                                    cgstPayable = cgstPayable,
+                                    sgstPayable = sgstPayable,
+                                    igstPayable = igstPayable,
+                                    cgstRec = cgstRec,
+                                    sgstRec = sgstRec,
+                                    igstRec = igstRec
+                                )
+                            }
 
-                ReportMenuCard(
-                    title = "Trial Balance",
-                    description = "Interactive Group-wise trial verification statement of net Debits and Credits",
-                    icon = Icons.Default.AccountBalance,
-                    onClick = { activeReport = "TRIAL" }
-                )
+                            "PL" -> {
+                                TradingAndPLView(
+                                    salesRevenue = salesRevenue,
+                                    purchasesCost = purchasesCost,
+                                    currentStockValue = currentStockValue,
+                                    grossProfit = grossProfit,
+                                    netProfit = netProfit,
+                                    roundOffValue = roundOffValue
+                                )
+                            }
 
-                ReportMenuCard(
-                    title = "Profit & Loss Account",
-                    description = "View real double-entry Trading (Gross GP) and P&L statements side-by-side",
-                    icon = Icons.Default.Assignment,
-                    onClick = { activeReport = "PL" }
-                )
+                            "BALANCE" -> {
+                                BalanceSheetView(
+                                    cashVal = cashVal,
+                                    bankVal = bankVal,
+                                    totalDebtors = totalDebtors,
+                                    closingStockVal = currentStockValue,
+                                    totalCreditors = totalCreditors,
+                                    liabilitiesDuties = liabilitiesDuties,
+                                    assetsDuties = assetsDuties,
+                                    balancingCapital = balancingCapitalEquity,
+                                    netProfit = netProfit,
+                                    totalAssets = totalAssets
+                                )
+                            }
 
-                ReportMenuCard(
-                    title = "Balance Sheet",
-                    description = "Double entry balanced visual assets, liabilities, and proprietor equity",
-                    icon = Icons.Default.Receipt,
-                    onClick = { activeReport = "BALANCE" }
-                )
+                            "GST" -> {
+                                GSTSummaryView(
+                                    cgstPay = cgstPayable,
+                                    sgstPay = sgstPayable,
+                                    igstPay = igstPayable,
+                                    cgstRec = cgstRec,
+                                    sgstRec = sgstRec,
+                                    igstRec = igstRec,
+                                    outputTotal = outputTaxTotal,
+                                    inputTotal = inputTaxCredit,
+                                    netPayable = netGstBalance
+                                )
+                            }
 
-                ReportMenuCard(
-                    title = "GST Summary Status",
-                    description = "Estimated output liabilities offset against input credits",
-                    icon = Icons.Default.Percent,
-                    onClick = { activeReport = "GST" }
-                )
+                            "RECEIVABLES" -> {
+                                var mSelectedTab by remember { mutableStateOf("BILLS") } // "PARTIES" vs "BILLS"
+                                val billsReceivable by viewModel.billsReceivable.collectAsState()
 
-                ReportMenuCard(
-                    title = "Outstanding Receivables (Email automation)",
-                    description = "Client outstanding report with automated invoice reminders",
-                    icon = Icons.Default.TrendingUp,
-                    onClick = { activeReport = "RECEIVABLES" }
-                )
+                                Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    TabRow(
+                                        selectedTabIndex = if (mSelectedTab == "PARTIES") 0 else 1,
+                                        containerColor = Colors.cardBackground,
+                                        contentColor = Colors.primary
+                                    ) {
+                                        Tab(
+                                            selected = mSelectedTab == "PARTIES",
+                                            onClick = { mSelectedTab = "PARTIES" },
+                                            text = { Text("By Customers", fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+                                        )
+                                        Tab(
+                                            selected = mSelectedTab == "BILLS",
+                                            onClick = { mSelectedTab = "BILLS" },
+                                            text = { Text("Bill-wise Outstanding", fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+                                        )
+                                    }
 
-                ReportMenuCard(
-                    title = "Outstanding Payables",
-                    description = "Supplier credits outstanding ledger status",
-                    icon = Icons.Default.TrendingDown,
-                    onClick = { activeReport = "PAYABLES" }
-                )
+                                    if (mSelectedTab == "PARTIES") {
+                                        DebtorsRemindersView(
+                                            debtors = debtorsList,
+                                            profile = profile,
+                                            context = context
+                                        )
+                                    } else {
+                                        AgedBillsListView(
+                                            bills = billsReceivable,
+                                            parties = parties,
+                                            viewModel = viewModel
+                                        )
+                                    }
+                                }
+                            }
+
+                            "PAYABLES" -> {
+                                CreditorsListView(creditors = creditorsList)
+                            }
+                        }
+                    }
+                }
             }
         }
     } else {
-        // Compute shared balances & items
-        val currentStockValue = remember(products) {
-            products.sumOf { it.openingStock * it.purchaseRate }
-        }
+        if (activeReport == "MENU") {
+            Scaffold(
+                topBar = {
+                    TopAppBar(
+                        title = { Text("Regulatory Financial Books & GST Reports", fontWeight = FontWeight.Black, color = Colors.textPrimary) },
+                        navigationIcon = {
+                            IconButton(onClick = onNavigateBack) {
+                                Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = Colors.textPrimary)
+                            }
+                        },
+                        colors = TopAppBarDefaults.topAppBarColors(containerColor = Colors.cardBackground)
+                    )
+                }
+            ) { innerPadding ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Colors.background)
+                        .verticalScroll(rememberScrollState())
+                        .padding(innerPadding)
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "Double Entry Ledger Reports Summary (${viewModel.financialYear.value})",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        color = Colors.textSecondary
+                    )
 
-        val salesRevenue = Math.abs(ledgerBalances["Sales Account"] ?: 0.0)
-        val purchasesCost = ledgerBalances["Purchases Account"] ?: 0.0
+                    ReportMenuCard(
+                        title = "Trial Balance",
+                        description = "Interactive Group-wise trial verification statement of net Debits and Credits",
+                        icon = Icons.Default.AccountBalance,
+                        onClick = { activeReport = "TRIAL" }
+                    )
 
-        val cgstPayable = ledgerBalances["CGST Payable"] ?: 0.0
-        val sgstPayable = ledgerBalances["SGST Payable"] ?: 0.0
-        val igstPayable = ledgerBalances["IGST Payable"] ?: 0.0
+                    ReportMenuCard(
+                        title = "Profit & Loss Account",
+                        description = "View real double-entry Trading (Gross GP) and P&L statements side-by-side",
+                        icon = Icons.Default.Assignment,
+                        onClick = { activeReport = "PL" }
+                    )
 
-        val cgstRec = ledgerBalances["CGST Receivable"] ?: 0.0
-        val sgstRec = ledgerBalances["SGST Receivable"] ?: 0.0
-        val igstRec = ledgerBalances["IGST Receivable"] ?: 0.0
+                    ReportMenuCard(
+                        title = "Balance Sheet",
+                        description = "Double entry balanced visual assets, liabilities, and proprietor equity",
+                        icon = Icons.Default.Receipt,
+                        onClick = { activeReport = "BALANCE" }
+                    )
 
-        val outputTaxTotal = cgstPayable + sgstPayable + igstPayable
-        val inputTaxCredit = cgstRec + sgstRec + igstRec
-        val netGstBalance = outputTaxTotal - inputTaxCredit
+                    ReportMenuCard(
+                        title = "GST Summary Status",
+                        description = "Estimated output liabilities offset against input credits",
+                        icon = Icons.Default.Percent,
+                        onClick = { activeReport = "GST" }
+                    )
 
-        val roundOffValue = ledgerBalances["Round Off Account"] ?: 0.0
+                    ReportMenuCard(
+                        title = "Outstanding Receivables (Email automation)",
+                        description = "Client outstanding report with automated invoice reminders",
+                        icon = Icons.Default.TrendingUp,
+                        onClick = { activeReport = "RECEIVABLES" }
+                    )
 
-        // P&L Calculations
-        val tradingDebit = purchasesCost
-        val tradingCredit = salesRevenue + currentStockValue
-        val grossProfit = tradingCredit - tradingDebit
-
-        val netProfit = grossProfit - (if (roundOffValue > 0) roundOffValue else 0.0)
-
-        // Assets and liabilities calculations for Balance Sheet
-        val cashVal = ledgerBalances["Cash"] ?: 0.0
-        val bankVal = ledgerBalances["Bank"] ?: 0.0
-        val totalDebtors = debtorsList.sumOf { it.second }
-        val totalCreditors = creditorsList.sumOf { it.second }
-
-        val assetsDuties = if (netGstBalance < 0.0) -netGstBalance else 0.0
-        val liabilitiesDuties = if (netGstBalance > 0.0) netGstBalance else 0.0
-
-        val totalAssets = cashVal + bankVal + totalDebtors + currentStockValue + assetsDuties
-        val otherLiabilities = totalCreditors + liabilitiesDuties
-        val balancingCapitalEquity = totalAssets - otherLiabilities
-
-        Scaffold(
-            topBar = {
-                TopAppBar(
-                    title = {
-                        Column {
-                            Text(
-                                text = when (activeReport) {
-                                    "TRIAL" -> "Trial Balance"
-                                    "PL" -> "Trading & Profit & Loss Statement"
-                                    "BALANCE" -> "Balance Sheet Statement"
-                                    "GST" -> "GST Register Summary"
-                                    "RECEIVABLES" -> "Outstanding Receivables Ledger"
-                                    "PAYABLES" -> "Outstanding Payables Ledger"
-                                    else -> activeReport
-                                },
-                                fontWeight = FontWeight.Bold,
-                                color = Colors.textPrimary,
-                                fontSize = 16.sp
-                            )
-                            Text(
-                                text = "ZeroBook • Financial Year ${viewModel.financialYear.value}",
-                                fontSize = 11.sp,
-                                color = Colors.textTertiary
-                            )
-                        }
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = { activeReport = "MENU" }) {
-                            Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = Colors.textPrimary)
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Colors.cardBackground)
-                )
+                    ReportMenuCard(
+                        title = "Outstanding Payables",
+                        description = "Supplier credits outstanding ledger status",
+                        icon = Icons.Default.TrendingDown,
+                        onClick = { activeReport = "PAYABLES" }
+                    )
+                }
             }
-        ) { innerPadding ->
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Colors.background)
-                    .padding(innerPadding)
-                    .padding(16.dp)
-            ) {
-                when (activeReport) {
-                    "TRIAL" -> {
-                        TrialBalanceView(
-                            ledgerBalances = ledgerBalances,
-                            debtorsList = debtorsList,
-                            creditorsList = creditorsList,
-                            currentStockValue = currentStockValue,
-                            roundOffValue = roundOffValue,
-                            salesRevenue = salesRevenue,
-                            purchasesCost = purchasesCost,
-                            cgstPayable = cgstPayable,
-                            sgstPayable = sgstPayable,
-                            igstPayable = igstPayable,
-                            cgstRec = cgstRec,
-                            sgstRec = sgstRec,
-                            igstRec = igstRec
-                        )
-                    }
-
-                    "PL" -> {
-                        TradingAndPLView(
-                            salesRevenue = salesRevenue,
-                            purchasesCost = purchasesCost,
-                            currentStockValue = currentStockValue,
-                            grossProfit = grossProfit,
-                            netProfit = netProfit,
-                            roundOffValue = roundOffValue
-                        )
-                    }
-
-                    "BALANCE" -> {
-                        BalanceSheetView(
-                            cashVal = cashVal,
-                            bankVal = bankVal,
-                            totalDebtors = totalDebtors,
-                            closingStockVal = currentStockValue,
-                            totalCreditors = totalCreditors,
-                            liabilitiesDuties = liabilitiesDuties,
-                            assetsDuties = assetsDuties,
-                            balancingCapital = balancingCapitalEquity,
-                            netProfit = netProfit,
-                            totalAssets = totalAssets
-                        )
-                    }
-
-                    "GST" -> {
-                        GSTSummaryView(
-                            cgstPay = cgstPayable,
-                            sgstPay = sgstPayable,
-                            igstPay = igstPayable,
-                            cgstRec = cgstRec,
-                            sgstRec = sgstRec,
-                            igstRec = igstRec,
-                            outputTotal = outputTaxTotal,
-                            inputTotal = inputTaxCredit,
-                            netPayable = netGstBalance
-                        )
-                    }
-
-                    "RECEIVABLES" -> {
-                        var mSelectedTab by remember { mutableStateOf("BILLS") } // "PARTIES" vs "BILLS"
-                        val billsReceivable by viewModel.billsReceivable.collectAsState()
-
-                        Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            TabRow(
-                                selectedTabIndex = if (mSelectedTab == "PARTIES") 0 else 1,
-                                containerColor = Colors.cardBackground,
-                                contentColor = Colors.primary
-                            ) {
-                                Tab(
-                                    selected = mSelectedTab == "PARTIES",
-                                    onClick = { mSelectedTab = "PARTIES" },
-                                    text = { Text("By Customers", fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+        } else {
+            Scaffold(
+                topBar = {
+                    TopAppBar(
+                        title = {
+                            Column {
+                                Text(
+                                    text = when (activeReport) {
+                                        "TRIAL" -> "Trial Balance"
+                                        "PL" -> "Trading & Profit & Loss Statement"
+                                        "BALANCE" -> "Balance Sheet Statement"
+                                        "GST" -> "GST Register Summary"
+                                        "RECEIVABLES" -> "Outstanding Receivables Ledger"
+                                        "PAYABLES" -> "Outstanding Payables Ledger"
+                                        else -> activeReport
+                                    },
+                                    fontWeight = FontWeight.Bold,
+                                    color = Colors.textPrimary,
+                                    fontSize = 16.sp
                                 )
-                                Tab(
-                                    selected = mSelectedTab == "BILLS",
-                                    onClick = { mSelectedTab = "BILLS" },
-                                    text = { Text("Bill-wise Outstanding", fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+                                Text(
+                                    text = "ZeroBook • Financial Year ${viewModel.financialYear.value}",
+                                    fontSize = 11.sp,
+                                    color = Colors.textTertiary
                                 )
                             }
-                            
-                            if (mSelectedTab == "PARTIES") {
-                                DebtorsRemindersView(
-                                    debtors = debtorsList,
-                                    profile = profile,
-                                    context = context
-                                )
-                            } else {
-                                AgedBillsListView(
-                                    bills = billsReceivable,
-                                    parties = parties,
-                                    viewModel = viewModel
-                                )
+                        },
+                        navigationIcon = {
+                            IconButton(onClick = { activeReport = "MENU" }) {
+                                Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = Colors.textPrimary)
+                            }
+                        },
+                        colors = TopAppBarDefaults.topAppBarColors(containerColor = Colors.cardBackground)
+                    )
+                }
+            ) { innerPadding ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Colors.background)
+                        .padding(innerPadding)
+                        .padding(16.dp)
+                ) {
+                    when (activeReport) {
+                        "TRIAL" -> {
+                            TrialBalanceView(
+                                ledgerBalances = ledgerBalances,
+                                debtorsList = debtorsList,
+                                creditorsList = creditorsList,
+                                currentStockValue = currentStockValue,
+                                roundOffValue = roundOffValue,
+                                salesRevenue = salesRevenue,
+                                purchasesCost = purchasesCost,
+                                cgstPayable = cgstPayable,
+                                sgstPayable = sgstPayable,
+                                igstPayable = igstPayable,
+                                cgstRec = cgstRec,
+                                sgstRec = sgstRec,
+                                igstRec = igstRec
+                            )
+                        }
+
+                        "PL" -> {
+                            TradingAndPLView(
+                                salesRevenue = salesRevenue,
+                                purchasesCost = purchasesCost,
+                                currentStockValue = currentStockValue,
+                                grossProfit = grossProfit,
+                                netProfit = netProfit,
+                                roundOffValue = roundOffValue
+                            )
+                        }
+
+                        "BALANCE" -> {
+                            BalanceSheetView(
+                                cashVal = cashVal,
+                                bankVal = bankVal,
+                                totalDebtors = totalDebtors,
+                                closingStockVal = currentStockValue,
+                                totalCreditors = totalCreditors,
+                                liabilitiesDuties = liabilitiesDuties,
+                                assetsDuties = assetsDuties,
+                                balancingCapital = balancingCapitalEquity,
+                                netProfit = netProfit,
+                                totalAssets = totalAssets
+                            )
+                        }
+
+                        "GST" -> {
+                            GSTSummaryView(
+                                cgstPay = cgstPayable,
+                                sgstPay = sgstPayable,
+                                igstPay = igstPayable,
+                                cgstRec = cgstRec,
+                                sgstRec = sgstRec,
+                                igstRec = igstRec,
+                                outputTotal = outputTaxTotal,
+                                inputTotal = inputTaxCredit,
+                                netPayable = netGstBalance
+                            )
+                        }
+
+                        "RECEIVABLES" -> {
+                            var mSelectedTab by remember { mutableStateOf("BILLS") } // "PARTIES" vs "BILLS"
+                            val billsReceivable by viewModel.billsReceivable.collectAsState()
+
+                            Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                TabRow(
+                                    selectedTabIndex = if (mSelectedTab == "PARTIES") 0 else 1,
+                                    containerColor = Colors.cardBackground,
+                                    contentColor = Colors.primary
+                                ) {
+                                    Tab(
+                                        selected = mSelectedTab == "PARTIES",
+                                        onClick = { mSelectedTab = "PARTIES" },
+                                        text = { Text("By Customers", fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+                                    )
+                                    Tab(
+                                        selected = mSelectedTab == "BILLS",
+                                        onClick = { mSelectedTab = "BILLS" },
+                                        text = { Text("Bill-wise Outstanding", fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+                                    )
+                                }
+
+                                if (mSelectedTab == "PARTIES") {
+                                    DebtorsRemindersView(
+                                        debtors = debtorsList,
+                                        profile = profile,
+                                        context = context
+                                    )
+                                } else {
+                                    AgedBillsListView(
+                                        bills = billsReceivable,
+                                        parties = parties,
+                                        viewModel = viewModel
+                                    )
+                                }
                             }
                         }
-                    }
 
-                    "PAYABLES" -> {
-                        CreditorsListView(creditors = creditorsList)
+                        "PAYABLES" -> {
+                            CreditorsListView(creditors = creditorsList)
+                        }
                     }
                 }
             }

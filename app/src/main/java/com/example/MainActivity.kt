@@ -180,199 +180,206 @@ fun MainAppEntry(viewModel: AppViewModel) {
                         onAuthentic = { pinAuthed = true }
                     )
                 } else {
-        Scaffold(
-            bottomBar = {
-                // Display standard One UI bottom bar only on major root tab screens
-                if (currentScreen is Screen.Dashboard || currentScreen is Screen.Vouchers || 
-                    currentScreen is Screen.Parties || currentScreen is Screen.Settings) {
-                    
-                    NavigationBar(
-                        containerColor = Colors.cardBackground,
-                        tonalElevation = 6.dp,
-                        modifier = Modifier.height(72.dp)
-                    ) {
-                        val currentTab = currentScreen
-                        
-                        NavigationBarItem(
-                            selected = currentTab is Screen.Dashboard,
-                            onClick = {
-                                backstack.clear()
-                            },
-                            icon = { Icon(imageVector = Icons.Default.GridView, contentDescription = "Dashboard") },
-                            label = { Text("Dashboard", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = Colors.primary,
-                                unselectedIconColor = Colors.textTertiary,
-                                selectedTextColor = Colors.primary,
-                                unselectedTextColor = Colors.textTertiary,
-                                indicatorColor = Colors.primary.copy(alpha = 0.12f)
-                            )
-                        )
+                    val isMajorScreen = currentScreen is Screen.Dashboard || currentScreen is Screen.Vouchers || 
+                                        currentScreen is Screen.Parties || currentScreen is Screen.Settings
 
-                        NavigationBarItem(
-                            selected = currentTab is Screen.Vouchers,
-                            onClick = {
-                                backstack.clear()
-                                navigateTo(Screen.Vouchers)
-                            },
-                            icon = { Icon(imageVector = Icons.Default.Assignment, contentDescription = "Vouchers") },
-                            label = { Text("Vouchers", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = Colors.primary,
-                                unselectedIconColor = Colors.textTertiary,
-                                selectedTextColor = Colors.primary,
-                                unselectedTextColor = Colors.textTertiary,
-                                indicatorColor = Colors.primary.copy(alpha = 0.12f)
-                            )
-                        )
+                    Scaffold(
+                        bottomBar = {
+                            // Display standard One UI bottom bar on major root tab screens
+                            if (isMajorScreen) {
+                                NavigationBar(
+                                    containerColor = Colors.cardBackground,
+                                    tonalElevation = 6.dp,
+                                    modifier = Modifier.height(72.dp)
+                                ) {
+                                    val currentTab = currentScreen
+                                    
+                                    NavigationBarItem(
+                                        selected = currentTab is Screen.Dashboard,
+                                        onClick = {
+                                            backstack.clear()
+                                        },
+                                        icon = { Icon(imageVector = Icons.Default.GridView, contentDescription = "Dashboard") },
+                                        label = { Text("Dashboard", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
+                                        colors = NavigationBarItemDefaults.colors(
+                                            selectedIconColor = Colors.primary,
+                                            unselectedIconColor = Colors.textTertiary,
+                                            selectedTextColor = Colors.primary,
+                                            unselectedTextColor = Colors.textTertiary,
+                                            indicatorColor = Colors.primary.copy(alpha = 0.12f)
+                                        )
+                                    )
 
-                        NavigationBarItem(
-                            selected = currentTab is Screen.Parties,
-                            onClick = {
-                                backstack.clear()
-                                navigateTo(Screen.Parties)
-                            },
-                            icon = { Icon(imageVector = Icons.Default.Group, contentDescription = "Parties") },
-                            label = { Text("Parties", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = Colors.primary,
-                                unselectedIconColor = Colors.textTertiary,
-                                selectedTextColor = Colors.primary,
-                                unselectedTextColor = Colors.textTertiary,
-                                indicatorColor = Colors.primary.copy(alpha = 0.12f)
-                            )
-                        )
+                                    NavigationBarItem(
+                                        selected = currentTab is Screen.Vouchers,
+                                        onClick = {
+                                            backstack.clear()
+                                            navigateTo(Screen.Vouchers)
+                                        },
+                                        icon = { Icon(imageVector = Icons.Default.Assignment, contentDescription = "Vouchers") },
+                                        label = { Text("Vouchers", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
+                                        colors = NavigationBarItemDefaults.colors(
+                                            selectedIconColor = Colors.primary,
+                                            unselectedIconColor = Colors.textTertiary,
+                                            selectedTextColor = Colors.primary,
+                                            unselectedTextColor = Colors.textTertiary,
+                                            indicatorColor = Colors.primary.copy(alpha = 0.12f)
+                                        )
+                                    )
 
-                        NavigationBarItem(
-                            selected = currentTab is Screen.Settings,
-                            onClick = {
-                                backstack.clear()
-                                navigateTo(Screen.Settings)
-                            },
-                            icon = { Icon(imageVector = Icons.Default.Settings, contentDescription = "Settings") },
-                            label = { Text("Settings", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = Colors.primary,
-                                unselectedIconColor = Colors.textTertiary,
-                                selectedTextColor = Colors.primary,
-                                unselectedTextColor = Colors.textTertiary,
-                                indicatorColor = Colors.primary.copy(alpha = 0.12f)
-                            )
-                        )
-                    }
-                }
-            }
-        ) { innerPadding ->
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding)
-            ) {
-                // Route current renderer using animated transitions
-                when (currentScreen) {
-                    is Screen.Setup -> {
-                        SetupScreen(
-                            viewModel = viewModel,
-                            onSetupComplete = {
-                                // Profile saved triggers StateFlow update automatically
-                            }
-                        )
-                    }
+                                    NavigationBarItem(
+                                        selected = currentTab is Screen.Parties,
+                                        onClick = {
+                                            backstack.clear()
+                                            navigateTo(Screen.Parties)
+                                        },
+                                        icon = { Icon(imageVector = Icons.Default.Group, contentDescription = "Parties") },
+                                        label = { Text("Parties", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
+                                        colors = NavigationBarItemDefaults.colors(
+                                            selectedIconColor = Colors.primary,
+                                            unselectedIconColor = Colors.textTertiary,
+                                            selectedTextColor = Colors.primary,
+                                            unselectedTextColor = Colors.textTertiary,
+                                            indicatorColor = Colors.primary.copy(alpha = 0.12f)
+                                        )
+                                    )
 
-                    is Screen.Dashboard -> {
-                        DashboardScreen(
-                            viewModel = viewModel,
-                            onQuickAction = { action ->
-                                when (action) {
-                                    "SALE" -> navigateTo(Screen.NewVoucher())
-                                    "PURCHASE" -> navigateTo(Screen.NewVoucher())
-                                    "RECEIPT" -> navigateTo(Screen.BankCash)
-                                    "PAYMENT" -> navigateTo(Screen.BankCash)
-                                    "REPORTS" -> navigateTo(Screen.Reports)
-                                    "PARTY" -> {
-                                        backstack.clear()
-                                        navigateTo(Screen.Parties)
-                                    }
+                                    NavigationBarItem(
+                                        selected = currentTab is Screen.Settings,
+                                        onClick = {
+                                            backstack.clear()
+                                            navigateTo(Screen.Settings)
+                                        },
+                                        icon = { Icon(imageVector = Icons.Default.Settings, contentDescription = "Settings") },
+                                        label = { Text("Settings", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
+                                        colors = NavigationBarItemDefaults.colors(
+                                            selectedIconColor = Colors.primary,
+                                            unselectedIconColor = Colors.textTertiary,
+                                            selectedTextColor = Colors.primary,
+                                            unselectedTextColor = Colors.textTertiary,
+                                            indicatorColor = Colors.primary.copy(alpha = 0.12f)
+                                        )
+                                    )
                                 }
                             }
-                        )
-                    }
+                        }
+                    ) { innerPadding ->
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(innerPadding)
+                        ) {
+                            // Route current renderer using animated transitions
+                            when (currentScreen) {
+                                is Screen.Setup -> {
+                                    SetupScreen(
+                                        viewModel = viewModel,
+                                        onSetupComplete = {
+                                            // Profile saved triggers StateFlow update automatically
+                                        }
+                                    )
+                                }
 
-                    is Screen.Vouchers -> {
-                        VouchersScreen(
-                            viewModel = viewModel,
-                            navigateToNewVoucher = { navigateTo(Screen.NewVoucher()) },
-                            navigateToInvoice = { id -> navigateTo(Screen.Invoice(id)) }
-                        )
-                    }
+                                is Screen.Dashboard -> {
+                                    DashboardScreen(
+                                        viewModel = viewModel,
+                                        isDesktop = false,
+                                        onQuickAction = { action ->
+                                            when (action) {
+                                                "SALE" -> navigateTo(Screen.NewVoucher())
+                                                "PURCHASE" -> navigateTo(Screen.NewVoucher())
+                                                "RECEIPT" -> navigateTo(Screen.BankCash)
+                                                "PAYMENT" -> navigateTo(Screen.BankCash)
+                                                "REPORTS" -> navigateTo(Screen.Reports)
+                                                "PARTY" -> {
+                                                    backstack.clear()
+                                                    navigateTo(Screen.Parties)
+                                                }
+                                            }
+                                        }
+                                    )
+                                }
 
-                    is Screen.Parties -> {
-                        PartiesScreen(
-                            viewModel = viewModel,
-                            onPartySelected = { id -> navigateTo(Screen.PartyDetail(id)) }
-                        )
-                    }
+                                is Screen.Vouchers -> {
+                                    VouchersScreen(
+                                        viewModel = viewModel,
+                                        isDesktop = false,
+                                        navigateToNewVoucher = { navigateTo(Screen.NewVoucher()) },
+                                        navigateToInvoice = { id -> navigateTo(Screen.Invoice(id)) }
+                                    )
+                                }
 
-                    is Screen.Settings -> {
-                        SettingsScreen(
-                            viewModel = viewModel,
-                            navigateToProducts = { navigateTo(Screen.Products) },
-                            onNavigateBack = { navigateBack() }
-                        )
-                    }
+                                is Screen.Parties -> {
+                                    PartiesScreen(
+                                        viewModel = viewModel,
+                                        isDesktop = false,
+                                        onPartySelected = { id -> navigateTo(Screen.PartyDetail(id)) }
+                                    )
+                                }
 
-                    is Screen.Reports -> {
-                        ReportsScreen(
-                            viewModel = viewModel,
-                            onNavigateBack = { navigateBack() }
-                        )
-                    }
+                                is Screen.Settings -> {
+                                    SettingsScreen(
+                                        viewModel = viewModel,
+                                        isDesktop = false,
+                                        navigateToProducts = { navigateTo(Screen.Products) },
+                                        onNavigateBack = { navigateBack() }
+                                    )
+                                }
 
-                    is Screen.Products -> {
-                        ProductsScreen(
-                            viewModel = viewModel,
-                            onNavigateBack = { navigateBack() }
-                        )
-                    }
+                                is Screen.Reports -> {
+                                    ReportsScreen(
+                                        viewModel = viewModel,
+                                        isDesktop = false,
+                                        onNavigateBack = { navigateBack() }
+                                    )
+                                }
 
-                    is Screen.BankCash -> {
-                        BankCashScreen(
-                            viewModel = viewModel,
-                            onNavigateBack = { navigateBack() }
-                        )
-                    }
+                                is Screen.Products -> {
+                                    ProductsScreen(
+                                        viewModel = viewModel,
+                                        onNavigateBack = { navigateBack() }
+                                    )
+                                }
 
-                    is Screen.NewVoucher -> {
-                        val vId = (currentScreen as Screen.NewVoucher).voucherId
-                        NewVoucherScreen(
-                            viewModel = viewModel,
-                            voucherId = vId,
-                            onNavigateBack = { navigateBack() }
-                        )
-                    }
+                                is Screen.BankCash -> {
+                                    BankCashScreen(
+                                        viewModel = viewModel,
+                                        onNavigateBack = { navigateBack() }
+                                    )
+                                }
 
-                    is Screen.Invoice -> {
-                        val vId = (currentScreen as Screen.Invoice).voucherId
-                        InvoiceScreen(
-                            viewModel = viewModel,
-                            voucherId = vId,
-                            onNavigateBack = { navigateBack() },
-                            onEditVoucher = { id -> navigateTo(Screen.NewVoucher(id)) }
-                        )
-                    }
+                                is Screen.NewVoucher -> {
+                                    val vId = (currentScreen as Screen.NewVoucher).voucherId
+                                    NewVoucherScreen(
+                                        viewModel = viewModel,
+                                        voucherId = vId,
+                                        isDesktop = false,
+                                        onNavigateBack = { navigateBack() }
+                                    )
+                                }
 
-                    is Screen.PartyDetail -> {
-                        val pId = (currentScreen as Screen.PartyDetail).partyId
-                        PartyDetailScreen(
-                            viewModel = viewModel,
-                            partyId = pId,
-                            onNavigateBack = { navigateBack() }
-                        )
+                                is Screen.Invoice -> {
+                                    val vId = (currentScreen as Screen.Invoice).voucherId
+                                    InvoiceScreen(
+                                        viewModel = viewModel,
+                                        voucherId = vId,
+                                        onNavigateBack = { navigateBack() },
+                                        onEditVoucher = { id -> navigateTo(Screen.NewVoucher(id)) }
+                                    )
+                                }
+
+                                is Screen.PartyDetail -> {
+                                    val pId = (currentScreen as Screen.PartyDetail).partyId
+                                    PartyDetailScreen(
+                                        viewModel = viewModel,
+                                        partyId = pId,
+                                        onNavigateBack = { navigateBack() }
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
-            }
-        }
-    }
 }
 }
 }

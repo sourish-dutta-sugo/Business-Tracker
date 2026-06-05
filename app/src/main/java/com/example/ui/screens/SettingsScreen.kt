@@ -58,13 +58,14 @@ import com.example.ui.theme.*
 @Composable
 fun SettingsScreen(
     viewModel: AppViewModel,
+    isDesktop: Boolean = false,
     navigateToProducts: () -> Unit,
     onNavigateBack: () -> Unit
 ) {
     val context = LocalContext.current
     val origProfile by viewModel.profile.collectAsState()
 
-    var activeSubMode by remember { mutableStateOf("MENU") } // "MENU", "BUSINESS", "LOCK", "ABOUT"
+    var activeSubMode by remember { mutableStateOf(if (isDesktop) "BUSINESS" else "MENU") }
     val vouchersForExport by viewModel.vouchers.collectAsState(initial = emptyList())
 
     val createCsvLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
@@ -88,156 +89,48 @@ fun SettingsScreen(
         }
     }
 
-    if (activeSubMode == "MENU") {
-        val scrollState = rememberScrollState()
+    @Composable
+    fun DetailContent() {
+        if (activeSubMode == "BUSINESS") {
+            // Business Profile Form Editor
+            val profile = origProfile ?: BusinessProfile(
+                businessName = "", ownerName = "", address = "", city = "", state = "West Bengal", stateCode = "19",
+                pin = "", phone = "", email = "", gstin = "", pan = "", bankName = "", accountNo = "", ifsc = "", 
+                logoPath = null, signaturePath = null, fyStartMonth = 4, fyStartYear = 2025, fyEndYear = 2026, fyLabel = "2025-26"
+            )
 
-        Scaffold { innerPadding ->
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Colors.background)
-                    .verticalScroll(scrollState)
-                    .padding(innerPadding)
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                Text(
-                    text = "Application Settings",
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Colors.textPrimary
-                )
+            var bName by remember { mutableStateOf(profile.businessName) }
+            var owner by remember { mutableStateOf(profile.ownerName) }
+            var address by remember { mutableStateOf(profile.address) }
+            var city by remember { mutableStateOf(profile.city) }
+            var pinCode by remember { mutableStateOf(profile.pin) }
+            var selectedStateInfo by remember { mutableStateOf(Utils.INDIAN_STATES.find { it.first == profile.state } ?: Utils.INDIAN_STATES[18]) }
+            var phone by remember { mutableStateOf(profile.phone) }
+            var email by remember { mutableStateOf(profile.email) }
+            var gstin by remember { mutableStateOf(profile.gstin) }
+            var pan by remember { mutableStateOf(profile.pan) }
+            var bankName by remember { mutableStateOf(profile.bankName) }
+            var accountNo by remember { mutableStateOf(profile.accountNo) }
+            var ifsc by remember { mutableStateOf(profile.ifsc) }
+            var fyStartMonth by remember { mutableStateOf(profile.fyStartMonth) }
+            var fyStartYear by remember { mutableStateOf(profile.fyStartYear) }
+            var fyEndYear by remember { mutableStateOf(profile.fyEndYear) }
+            var fyLabel by remember { mutableStateOf(profile.fyLabel) }
 
-                // Menu items
-                SettingsMenuCard(
-                    title = "Edit Business Profile",
-                    description = "Update GSTIN, Address, PAN, signature, and bank details",
-                    icon = Icons.Default.Business,
-                    onClick = { activeSubMode = "BUSINESS" }
-                )
+            var stateDropdownExpanded by remember { mutableStateOf(false) }
+            val formScroll = rememberScrollState()
 
-                SettingsMenuCard(
-                    title = "Manage Products Master",
-                    description = "Configure stock prices, units, and standard HSN codes",
-                    icon = Icons.Default.ShoppingBag,
-                    onClick = navigateToProducts
-                )
+            // Signature Pad drawing states
+            val signaturePaths = remember { mutableStateListOf<List<androidx.compose.ui.geometry.Offset>>() }
+            var signatureCurrentPath by remember { mutableStateOf<List<androidx.compose.ui.geometry.Offset>>(emptyList()) }
+            var canvasWidth by remember { mutableStateOf(400) }
+            var canvasHeight by remember { mutableStateOf(160) }
+            var isSignatureSaved by remember { mutableStateOf(profile.signaturePath != null && java.io.File(profile.signaturePath).exists()) }
 
-                SettingsMenuCard(
-                    title = "App Lock PIN Configuration",
-                    description = "Enable toggle lock code protection on starts",
-                    icon = Icons.Default.Lock,
-                    onClick = { activeSubMode = "LOCK" }
-                )
-
-                SettingsMenuCard(
-                    title = "Financial Year Settings",
-                    description = "Configure custom financial year with auto-save and validations",
-                    icon = Icons.Default.DateRange,
-                    onClick = { activeSubMode = "FY" }
-                )
-
-                SettingsMenuCard(
-                    title = "Email Automation Control",
-                    description = "Automate bills outstanding reminders to debtors",
-                    icon = Icons.Default.Email,
-                    onClick = { activeSubMode = "EMAIL" }
-                )
-
-                SettingsMenuCard(
-                    title = "About ZeroBook",
-                    description = "Check compliance versions and regulatory details",
-                    icon = Icons.Default.Info,
-                    onClick = { activeSubMode = "ABOUT" }
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Backup Section Card
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .border(1.dp, Colors.border, RoundedCornerShape(12.dp)),
-                    colors = CardDefaults.cardColors(containerColor = Colors.cardBackground)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("BACKUP & RESTORE DATA", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Colors.textSecondary)
-                        Text(
-                            "Export your complete SQLite database file directly as an encrypted local backup to safe-keep transaction ledgers.",
-                            fontSize = 11.sp,
-                            color = Colors.textSecondary
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Button(
-                                onClick = {
-                                    createCsvLauncher.launch("ZeroBook_Ledger.csv")
-                                },
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.weight(1f),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Colors.primary,
-                                    contentColor = Colors.primaryText
-                                )
-                            ) {
-                                Text("Export to CSV", fontSize = 11.sp)
-                            }
-                            OutlinedButton(
-                                onClick = {
-                                    Toast.makeText(context, "Backup recovered perfectly! Database state synchronized.", Toast.LENGTH_LONG).show()
-                                },
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text("Restore Backup", fontSize = 11.sp)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    } else if (activeSubMode == "BUSINESS") {
-        // Business Profile Form Editor
-        val profile = origProfile ?: BusinessProfile(
-            businessName = "", ownerName = "", address = "", city = "", state = "West Bengal", stateCode = "19",
-            pin = "", phone = "", email = "", gstin = "", pan = "", bankName = "", accountNo = "", ifsc = "", 
-            logoPath = null, signaturePath = null, fyStartMonth = 4, fyStartYear = 2025, fyEndYear = 2026, fyLabel = "2025-26"
-        )
-
-        var bName by remember { mutableStateOf(profile.businessName) }
-        var owner by remember { mutableStateOf(profile.ownerName) }
-        var address by remember { mutableStateOf(profile.address) }
-        var city by remember { mutableStateOf(profile.city) }
-        var pinCode by remember { mutableStateOf(profile.pin) }
-        var selectedStateInfo by remember { mutableStateOf(Utils.INDIAN_STATES.find { it.first == profile.state } ?: Utils.INDIAN_STATES[18]) }
-        var phone by remember { mutableStateOf(profile.phone) }
-        var email by remember { mutableStateOf(profile.email) }
-        var gstin by remember { mutableStateOf(profile.gstin) }
-        var pan by remember { mutableStateOf(profile.pan) }
-        var bankName by remember { mutableStateOf(profile.bankName) }
-        var accountNo by remember { mutableStateOf(profile.accountNo) }
-        var ifsc by remember { mutableStateOf(profile.ifsc) }
-        var fyStartMonth by remember { mutableStateOf(profile.fyStartMonth) }
-        var fyStartYear by remember { mutableStateOf(profile.fyStartYear) }
-        var fyEndYear by remember { mutableStateOf(profile.fyEndYear) }
-        var fyLabel by remember { mutableStateOf(profile.fyLabel) }
-
-        var stateDropdownExpanded by remember { mutableStateOf(false) }
-        val formScroll = rememberScrollState()
-
-        // Signature Pad drawing states
-        val signaturePaths = remember { mutableStateListOf<List<androidx.compose.ui.geometry.Offset>>() }
-        var signatureCurrentPath by remember { mutableStateOf<List<androidx.compose.ui.geometry.Offset>>(emptyList()) }
-        var canvasWidth by remember { mutableStateOf(400) }
-        var canvasHeight by remember { mutableStateOf(160) }
-        var isSignatureSaved by remember { mutableStateOf(profile.signaturePath != null && java.io.File(profile.signaturePath).exists()) }
-
-        val imageLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-            contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
-        ) { uri ->
-            if (uri != null) {
+            val imageLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+                contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
+            ) { uri ->
+                if (uri != null) {
                 try {
                     val inputStream = context.contentResolver.openInputStream(uri)
                     val sigFile = java.io.File(context.filesDir, "business_signature.png")
@@ -260,8 +153,10 @@ fun SettingsScreen(
                 TopAppBar(
                     title = { Text("Business Profile", fontWeight = FontWeight.Bold, color = Colors.textPrimary) },
                     navigationIcon = {
-                        IconButton(onClick = { activeSubMode = "MENU" }) {
-                            Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = Colors.textPrimary)
+                        if (!isDesktop) {
+                            IconButton(onClick = { activeSubMode = "MENU" }) {
+                                Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = Colors.textPrimary)
+                            }
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Colors.cardBackground)
@@ -578,8 +473,10 @@ fun SettingsScreen(
                 TopAppBar(
                     title = { Text("App Pin Protection Lock", fontWeight = FontWeight.Bold) },
                     navigationIcon = {
-                        IconButton(onClick = { activeSubMode = "MENU" }) {
-                            Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back")
+                        if (!isDesktop) {
+                            IconButton(onClick = { activeSubMode = "MENU" }) {
+                                Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back")
+                            }
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.White)
@@ -650,8 +547,10 @@ fun SettingsScreen(
                 TopAppBar(
                     title = { Text("About ZeroBook Detail", fontWeight = FontWeight.Bold, color = Colors.textPrimary) },
                     navigationIcon = {
-                        IconButton(onClick = { activeSubMode = "MENU" }) {
-                            Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = Colors.textPrimary)
+                        if (!isDesktop) {
+                            IconButton(onClick = { activeSubMode = "MENU" }) {
+                                Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = Colors.textPrimary)
+                            }
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Colors.cardBackground)
@@ -732,8 +631,10 @@ fun SettingsScreen(
                 TopAppBar(
                     title = { Text("Financial Year Control", fontWeight = FontWeight.Bold, color = Colors.textPrimary) },
                     navigationIcon = {
-                        IconButton(onClick = { activeSubMode = "MENU" }) {
-                            Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = Colors.textPrimary)
+                        if (!isDesktop) {
+                            IconButton(onClick = { activeSubMode = "MENU" }) {
+                                Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = Colors.textPrimary)
+                            }
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Colors.cardBackground)
@@ -923,8 +824,10 @@ fun SettingsScreen(
                 TopAppBar(
                     title = { Text("Email Automation System", fontWeight = FontWeight.Bold, color = Colors.textPrimary) },
                     navigationIcon = {
-                        IconButton(onClick = { activeSubMode = "MENU" }) {
-                            Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = Colors.textPrimary)
+                        if (!isDesktop) {
+                            IconButton(onClick = { activeSubMode = "MENU" }) {
+                                Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = Colors.textPrimary)
+                            }
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Colors.cardBackground)
@@ -1093,6 +996,172 @@ fun SettingsScreen(
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+    if (isDesktop) {
+        Row(modifier = Modifier.fillMaxSize()) {
+            Box(modifier = Modifier.width(360.dp).fillMaxHeight()) {
+                Scaffold(
+                    topBar = {
+                        TopAppBar(
+                            title = { Text("Application Settings", fontWeight = FontWeight.Bold, color = Colors.textPrimary) },
+                            colors = TopAppBarDefaults.topAppBarColors(containerColor = Colors.cardBackground)
+                        )
+                    }
+                ) { innerPadding ->
+                    Box(modifier = Modifier.padding(innerPadding)) {
+                        SettingsMenuSection(
+                            activeSubMode = activeSubMode,
+                            onSelect = { activeSubMode = it },
+                            createCsvLauncher = createCsvLauncher,
+                            context = context,
+                            navigateToProducts = navigateToProducts
+                        )
+                    }
+                }
+            }
+            Box(modifier = Modifier.width(1.dp).fillMaxHeight().background(Colors.border))
+            Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                DetailContent()
+            }
+        }
+    } else {
+        if (activeSubMode == "MENU") {
+            Scaffold(
+                topBar = {
+                    TopAppBar(
+                        title = { Text("Application Settings", fontWeight = FontWeight.Bold, color = Colors.textPrimary) },
+                        navigationIcon = {
+                            IconButton(onClick = onNavigateBack) {
+                                Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = Colors.textPrimary)
+                            }
+                        },
+                        colors = TopAppBarDefaults.topAppBarColors(containerColor = Colors.cardBackground)
+                    )
+                }
+            ) { innerPadding ->
+                Box(modifier = Modifier.padding(innerPadding)) {
+                    SettingsMenuSection(
+                        activeSubMode = activeSubMode,
+                        onSelect = { activeSubMode = it },
+                        createCsvLauncher = createCsvLauncher,
+                        context = context,
+                        navigateToProducts = navigateToProducts
+                    )
+                }
+            }
+        } else {
+            DetailContent()
+        }
+    }
+}
+
+@Composable
+fun SettingsMenuSection(
+    activeSubMode: String,
+    onSelect: (String) -> Unit,
+    createCsvLauncher: androidx.activity.result.ActivityResultLauncher<String>,
+    context: android.content.Context,
+    navigateToProducts: () -> Unit
+) {
+    val scrollState = rememberScrollState()
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Colors.background)
+            .verticalScroll(scrollState)
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // Menu items
+        SettingsMenuCard(
+            title = "Edit Business Profile",
+            description = "Update GSTIN, Address, PAN, signature, and bank details",
+            icon = Icons.Default.Business,
+            onClick = { onSelect("BUSINESS") }
+        )
+
+        SettingsMenuCard(
+            title = "Manage Products Master",
+            description = "Configure stock prices, units, and standard HSN codes",
+            icon = Icons.Default.ShoppingBag,
+            onClick = navigateToProducts
+        )
+
+        SettingsMenuCard(
+            title = "App Lock PIN Configuration",
+            description = "Enable toggle lock code protection on starts",
+            icon = Icons.Default.Lock,
+            onClick = { onSelect("LOCK") }
+        )
+
+        SettingsMenuCard(
+            title = "Financial Year Settings",
+            description = "Configure custom financial year with auto-save and validations",
+            icon = Icons.Default.DateRange,
+            onClick = { onSelect("FY") }
+        )
+
+        SettingsMenuCard(
+            title = "Email Automation Control",
+            description = "Automate bills outstanding reminders to debtors",
+            icon = Icons.Default.Email,
+            onClick = { onSelect("EMAIL") }
+        )
+
+        SettingsMenuCard(
+            title = "About ZeroBook",
+            description = "Check compliance versions and regulatory details",
+            icon = Icons.Default.Info,
+            onClick = { onSelect("ABOUT") }
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Backup Section Card
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, Colors.border, RoundedCornerShape(12.dp)),
+            colors = CardDefaults.cardColors(containerColor = Colors.cardBackground)
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("BACKUP & RESTORE DATA", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Colors.textSecondary)
+                Text(
+                    "Export your complete SQLite database file directly as an encrypted local backup to safe-keep transaction ledgers.",
+                    fontSize = 11.sp,
+                    color = Colors.textSecondary
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            createCsvLauncher.launch("ZeroBook_Ledger.csv")
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Colors.primary,
+                            contentColor = Colors.primaryText
+                        )
+                    ) {
+                        Text("Export to CSV", fontSize = 11.sp)
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            Toast.makeText(context, "Backup recovered perfectly! Database state synchronized.", Toast.LENGTH_LONG).show()
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Restore Backup", fontSize = 11.sp)
                     }
                 }
             }

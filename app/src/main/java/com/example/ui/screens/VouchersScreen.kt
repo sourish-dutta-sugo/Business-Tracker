@@ -56,7 +56,8 @@ import java.util.*
 @Composable
 fun VouchersScreen(
     viewModel: AppViewModel,
-    navigateToNewVoucher: () -> Unit,
+    isDesktop: Boolean = false,
+    navigateToNewVoucher: (String?) -> Unit,
     navigateToInvoice: (String) -> Unit
 ) {
     val vouchers by viewModel.vouchers.collectAsState()
@@ -75,175 +76,354 @@ fun VouchersScreen(
         }
     }
 
-    Scaffold(
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = navigateToNewVoucher,
-                containerColor = Colors.primary,
-                contentColor = Colors.primaryText,
-                modifier = Modifier.testTag("add_voucher_fab")
-            ) {
-                Icon(imageVector = Icons.Default.Add, contentDescription = "Add Voucher")
-            }
+    var selectedVoucherId by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(filteredVouchers, isDesktop) {
+        if (isDesktop && selectedVoucherId == null && filteredVouchers.isNotEmpty()) {
+            selectedVoucherId = filteredVouchers.first().id
         }
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Colors.background)
-                .padding(innerPadding)
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text(
-                text = "Vouchers",
-                fontSize = 22.sp,
-                fontWeight = FontWeight.Bold,
-                color = Colors.textPrimary
-            )
+    }
 
-            // Search Bar
-            RetailTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                label = "Search Vouchers",
-                placeholder = "Search by voucher number or party...",
-                trailingIcon = { Icon(imageVector = Icons.Default.Search, contentDescription = null, tint = Colors.textSecondary) },
-                modifier = Modifier.fillMaxWidth().testTag("voucher_search_bar")
-            )
-
-            // Quick Type Filters Row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                val filters = listOf("ALL", "SALE", "PURCHASE", "RECEIPT", "PAYMENT")
-                filters.forEach { filter ->
-                    FilterChip(
-                        selected = selectedTypeFilter == filter,
-                        onClick = { selectedTypeFilter = filter },
-                        label = { Text(filter, fontSize = 11.sp) },
-                        shape = RoundedCornerShape(4.dp),
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = Colors.primary,
-                            selectedLabelColor = Colors.primaryText
-                        )
-                    )
-                }
-            }
-
-            if (vouchers.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.padding(32.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Assignment,
-                            contentDescription = null,
-                            tint = Colors.textTertiary,
-                            modifier = Modifier.size(56.dp)
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = "No vouchers yet. Tap + to create your first sale.",
-                            color = Colors.textPrimary,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Medium,
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                }
-            } else if (filteredVouchers.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            imageVector = Icons.Default.FilterList,
-                            contentDescription = null,
-                            tint = Colors.textTertiary,
-                            modifier = Modifier.size(48.dp)
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text("No matching vouchers found.", color = Colors.textSecondary, fontSize = 14.sp)
-                    }
-                }
-            } else {
-                LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    items(filteredVouchers) { voucher ->
-                        val partyName = parties.find { it.id == voucher.partyId }?.name ?: "Cash / Bank Account"
-                        
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .border(1.dp, Colors.border, RoundedCornerShape(16.dp))
-                                .clickable { navigateToInvoice(voucher.id) },
-                            colors = CardDefaults.cardColors(containerColor = Colors.cardBackground)
+    if (isDesktop) {
+        Row(modifier = Modifier.fillMaxSize()) {
+            Box(modifier = Modifier.width(360.dp).fillMaxHeight()) {
+                Scaffold(
+                    floatingActionButton = {
+                        FloatingActionButton(
+                            onClick = { navigateToNewVoucher(null) },
+                            containerColor = Colors.primary,
+                            contentColor = Colors.primaryText,
+                            modifier = Modifier.testTag("add_voucher_fab")
                         ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = voucher.voucherNo,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 14.sp,
-                                        color = Color(0xFF1A1A1A)
+                            Icon(imageVector = Icons.Default.Add, contentDescription = "Add Voucher")
+                        }
+                    }
+                ) { innerPadding ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Colors.background)
+                            .padding(innerPadding)
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = "Vouchers",
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Colors.textPrimary
+                        )
+
+                        RetailTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            label = "Search Vouchers",
+                            placeholder = "Search by voucher...",
+                            trailingIcon = { Icon(imageVector = Icons.Default.Search, contentDescription = null, tint = Colors.textSecondary) },
+                            modifier = Modifier.fillMaxWidth().testTag("voucher_search_bar")
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            val filters = listOf("ALL", "SALE", "PURCHASE", "RECEIPT", "PAYMENT")
+                            filters.forEach { filter ->
+                                FilterChip(
+                                    selected = selectedTypeFilter == filter,
+                                    onClick = { selectedTypeFilter = filter },
+                                    label = { Text(filter, fontSize = 9.sp) },
+                                    shape = RoundedCornerShape(4.dp),
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = Colors.primary,
+                                        selectedLabelColor = Colors.primaryText
                                     )
-                                    // Colored Badge
-                                    val badgeColor = when (voucher.type) {
-                                        "SALE" -> Color(0xFF1A73E8)
-                                        "PURCHASE" -> Color(0xFF6F42C1)
-                                        "RECEIPT" -> Color(0xFF28A745)
-                                        "PAYMENT" -> Color(0xFFDC3545)
-                                        else -> Color.Gray
-                                    }
+                                )
+                            }
+                        }
+
+                        if (filteredVouchers.isEmpty()) {
+                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Text("No vouchers found.", color = Colors.textSecondary)
+                            }
+                        } else {
+                            LazyColumn(
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxSize()
+                            ) {
+                                items(filteredVouchers) { voucher ->
+                                    val partyName = parties.find { it.id == voucher.partyId }?.name ?: "Cash / Bank Account"
+                                    val isSelected = selectedVoucherId == voucher.id
                                     Card(
-                                        colors = CardDefaults.cardColors(containerColor = badgeColor.copy(alpha = 0.15f)),
-                                        shape = RoundedCornerShape(4.dp)
-                                    ) {
-                                        Text(
-                                            text = voucher.type,
-                                            color = badgeColor,
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .border(
+                                                1.dp,
+                                                if (isSelected) Colors.primary else Colors.border,
+                                                RoundedCornerShape(16.dp)
+                                            )
+                                            .clickable { selectedVoucherId = voucher.id },
+                                        colors = CardDefaults.cardColors(
+                                            containerColor = if (isSelected) Colors.primary.copy(alpha = 0.08f) else Colors.cardBackground
                                         )
+                                    ) {
+                                        Column(modifier = Modifier.padding(12.dp)) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = voucher.voucherNo,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 12.sp,
+                                                    color = Color(0xFF1A1A1A)
+                                                )
+                                                val badgeColor = when (voucher.type) {
+                                                    "SALE" -> Color(0xFF1A73E8)
+                                                    "PURCHASE" -> Color(0xFF6F42C1)
+                                                    "RECEIPT" -> Color(0xFF28A745)
+                                                    "PAYMENT" -> Color(0xFFDC3545)
+                                                    else -> Color.Gray
+                                                }
+                                                Card(
+                                                    colors = CardDefaults.cardColors(containerColor = badgeColor.copy(alpha = 0.15f)),
+                                                    shape = RoundedCornerShape(4.dp)
+                                                ) {
+                                                    Text(
+                                                        text = voucher.type,
+                                                        color = badgeColor,
+                                                        fontSize = 9.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                                    )
+                                                }
+                                            }
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Text(
+                                                text = partyName,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = Color(0xFF333333)
+                                            )
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Text(
+                                                    text = Utils.formatDate(voucher.date),
+                                                    fontSize = 10.sp,
+                                                    color = Colors.textSecondary
+                                                )
+                                                Text(
+                                                    text = Utils.formatIndianCurrency(voucher.netAmount),
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 12.sp,
+                                                    color = Color(0xFF161616)
+                                                )
+                                            }
+                                        }
                                     }
                                 }
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = partyName,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = Color(0xFF333333)
-                                )
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
+                            }
+                        }
+                    }
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .padding(8.dp)
+            ) {
+                selectedVoucherId?.let { vId ->
+                    InvoiceScreen(
+                        viewModel = viewModel,
+                        voucherId = vId,
+                        onNavigateBack = { selectedVoucherId = null },
+                        onEditVoucher = { id -> navigateToNewVoucher(id) }
+                    )
+                } ?: Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("Select a voucher to see the layout representation.", color = Colors.textSecondary)
+                }
+            }
+        }
+    } else {
+        Scaffold(
+            floatingActionButton = {
+                FloatingActionButton(
+                    onClick = { navigateToNewVoucher(null) },
+                    containerColor = Colors.primary,
+                    contentColor = Colors.primaryText,
+                    modifier = Modifier.testTag("add_voucher_fab")
+                ) {
+                    Icon(imageVector = Icons.Default.Add, contentDescription = "Add Voucher")
+                }
+            }
+        ) { innerPadding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Colors.background)
+                    .padding(innerPadding)
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "Vouchers",
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Colors.textPrimary
+                )
+
+                // Search Bar
+                RetailTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    label = "Search Vouchers",
+                    placeholder = "Search by voucher number or party...",
+                    trailingIcon = { Icon(imageVector = Icons.Default.Search, contentDescription = null, tint = Colors.textSecondary) },
+                    modifier = Modifier.fillMaxWidth().testTag("voucher_search_bar")
+                )
+
+                // Quick Type Filters Row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val filters = listOf("ALL", "SALE", "PURCHASE", "RECEIPT", "PAYMENT")
+                    filters.forEach { filter ->
+                        FilterChip(
+                            selected = selectedTypeFilter == filter,
+                            onClick = { selectedTypeFilter = filter },
+                            label = { Text(filter, fontSize = 11.sp) },
+                            shape = RoundedCornerShape(4.dp),
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = Colors.primary,
+                                selectedLabelColor = Colors.primaryText
+                            )
+                        )
+                    }
+                }
+
+                if (vouchers.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(32.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Assignment,
+                                contentDescription = null,
+                                tint = Colors.textTertiary,
+                                modifier = Modifier.size(56.dp)
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = "No vouchers yet. Tap + to create your first sale.",
+                                color = Colors.textPrimary,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Medium,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                } else if (filteredVouchers.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                imageVector = Icons.Default.FilterList,
+                                contentDescription = null,
+                                tint = Colors.textTertiary,
+                                modifier = Modifier.size(48.dp)
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("No matching vouchers found.", color = Colors.textSecondary, fontSize = 14.sp)
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        items(filteredVouchers) { voucher ->
+                            val partyName = parties.find { it.id == voucher.partyId }?.name ?: "Cash / Bank Account"
+                            
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .border(1.dp, Colors.border, RoundedCornerShape(16.dp))
+                                    .clickable { navigateToInvoice(voucher.id) },
+                                colors = CardDefaults.cardColors(containerColor = Colors.cardBackground)
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = voucher.voucherNo,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 14.sp,
+                                            color = Color(0xFF1A1A1A)
+                                        )
+                                        // Colored Badge
+                                        val badgeColor = when (voucher.type) {
+                                            "SALE" -> Color(0xFF1A73E8)
+                                            "PURCHASE" -> Color(0xFF6F42C1)
+                                            "RECEIPT" -> Color(0xFF28A745)
+                                            "PAYMENT" -> Color(0xFFDC3545)
+                                            else -> Color.Gray
+                                        }
+                                        Card(
+                                            colors = CardDefaults.cardColors(containerColor = badgeColor.copy(alpha = 0.15f)),
+                                            shape = RoundedCornerShape(4.dp)
+                                        ) {
+                                            Text(
+                                                text = voucher.type,
+                                                color = badgeColor,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = Utils.formatDate(voucher.date),
-                                        fontSize = 11.sp,
-                                        color = Colors.textSecondary
+                                        text = partyName,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = Color(0xFF333333)
                                     )
-                                    Text(
-                                        text = Utils.formatIndianCurrency(voucher.netAmount),
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 14.sp,
-                                        color = Color(0xFF161616)
-                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = Utils.formatDate(voucher.date),
+                                            fontSize = 11.sp,
+                                            color = Colors.textSecondary
+                                        )
+                                        Text(
+                                            text = Utils.formatIndianCurrency(voucher.netAmount),
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 14.sp,
+                                            color = Color(0xFF161616)
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -260,6 +440,7 @@ fun VouchersScreen(
 fun NewVoucherScreen(
     viewModel: AppViewModel,
     voucherId: String? = null,
+    isDesktop: Boolean = false,
     onNavigateBack: () -> Unit
 ) {
     val profile by viewModel.profile.collectAsState()
@@ -489,21 +670,31 @@ fun NewVoucherScreen(
                         navigationIconContentColor = Color(0xFF0F172A)
                     )
                 )
-            }
+            },
+            bottomBar = {
+                if (!isDesktop) {
+                    StickyBottomBar(
+                        netAmount = netAmount.value,
+                        selectedType = selectedType,
+                        onSaveClick = { shouldPrint -> validateAndSave(shouldPrint) }
+                    )
+                }
+            },
+            modifier = Modifier.fillMaxSize()
         ) { innerPadding ->
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.White)
-                    .padding(innerPadding)
-            ) {
+            @Composable
+            fun FormContent(showStickyBar: Boolean) {
                 Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .verticalScroll(scrollState)
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    modifier = Modifier.fillMaxSize()
                 ) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .verticalScroll(scrollState)
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         RetailTextField(
                             value = voucherNo,
@@ -1133,55 +1324,65 @@ fun NewVoucherScreen(
                             Text("Net Total Owed:", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                             Text(Utils.formatIndianCurrency(netAmount.value), fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.primary)
                         }
-
-                        Spacer(modifier = Modifier.height(4.dp))
-
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        val isSaleOrReturn = selectedType == "SALE" || selectedType == "SALE_RETURN"
-
-                        if (isSaleOrReturn) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Button(
-                                    onClick = { validateAndSave(false) },
-                                    modifier = Modifier.weight(1f).height(48.dp).testTag("save_and_exit_button"),
-                                    shape = RoundedCornerShape(8.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF64748B)) // Slate gray
-                                ) {
-                                    Icon(imageVector = Icons.Default.Check, contentDescription = null, modifier = Modifier.padding(end = 4.dp).size(16.dp))
-                                    Text("Save & Exit", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                                }
-                                
-                                Button(
-                                    onClick = { validateAndSave(true) },
-                                    modifier = Modifier.weight(1.1f).height(48.dp).testTag("save_and_print_button"),
-                                    shape = RoundedCornerShape(8.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Colors.primary)
-                                ) {
-                                    Icon(imageVector = Icons.Default.Assignment, contentDescription = null, modifier = Modifier.padding(end = 4.dp).size(16.dp))
-                                    Text("Save & Print", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                                }
-                            }
-                        } else {
-                            // Purchases or receipt/payments
-                            Button(
-                                onClick = { validateAndSave(false) },
-                                modifier = Modifier.fillMaxWidth().height(48.dp).testTag("save_voucher_button"),
-                                shape = RoundedCornerShape(8.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Colors.primary)
-                            ) {
-                                Icon(imageVector = Icons.Default.Check, contentDescription = null, modifier = Modifier.padding(end = 6.dp))
-                                Text("Save & Post to Ledger", fontWeight = FontWeight.Bold)
-                            }
-                        }
                     }
                 }
             }
+
+            if (showStickyBar) {
+                StickyBottomBar(
+                    netAmount = netAmount.value,
+                    selectedType = selectedType,
+                    onSaveClick = { shouldPrint -> validateAndSave(shouldPrint) }
+                )
+            }
+        }
+
+        if (isDesktop) {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.White)
+                    .padding(innerPadding)
+            ) {
+                Box(modifier = Modifier.weight(1.2f).fillMaxHeight()) {
+                    FormContent(showStickyBar = true)
+                }
+                Box(modifier = Modifier.width(1.dp).fillMaxHeight().background(Colors.border))
+                Box(
+                    modifier = Modifier
+                        .weight(0.8f)
+                        .fillMaxHeight()
+                        .background(Colors.background)
+                ) {
+                    LiveInvoicePreview(
+                        profile = profile,
+                        party = selectedParty,
+                        voucherNo = voucherNo,
+                        voucherDate = voucherDate,
+                        paymentMode = paymentMode,
+                        lineItems = lineItems,
+                        taxableAmount = taxableAmount.value,
+                        cgst = cgst.value,
+                        sgst = sgst.value,
+                        igst = igst.value,
+                        roundOff = roundOff.value,
+                        netAmount = netAmount.value,
+                        selectedType = selectedType
+                    )
+                }
+            }
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.White)
+                    .padding(innerPadding)
+            ) {
+                FormContent(showStickyBar = false)
+            }
         }
     }
+}
 
     // Interactive UPI Verification & Scanning Dialog
     if (showUpiPaymentDialog) {
@@ -2049,5 +2250,300 @@ fun NewVoucherScreen(
                 }
             }
         )
+    }
+}
+
+@Composable
+fun LiveInvoicePreview(
+    profile: com.example.data.BusinessProfile?,
+    party: com.example.data.Party?,
+    voucherNo: String,
+    voucherDate: Long,
+    paymentMode: String,
+    lineItems: List<com.example.data.VoucherItem>,
+    taxableAmount: Double,
+    cgst: Double,
+    sgst: Double,
+    igst: Double,
+    roundOff: Double,
+    netAmount: Double,
+    selectedType: String
+) {
+    val scrollState = rememberScrollState()
+    Card(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp)
+                .verticalScroll(scrollState),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "LIVE INVOICE PREVIEW",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Colors.primary,
+                    modifier = Modifier
+                        .background(Colors.primary.copy(alpha = 0.12f), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+                Text(
+                    text = if (profile?.gstin.isNullOrBlank()) "ESTIMATE" else "TAX INVOICE",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Colors.textPrimary
+                )
+            }
+
+            // Buyer and Seller details block
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(0.5.dp, Color.LightGray, RoundedCornerShape(4.dp))
+                    .padding(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Seller Details Box (Left)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("SELLER:", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
+                    Spacer(modifier = Modifier.height(2.dp))
+                    profile?.let { prof ->
+                        Text(text = prof.businessName, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text(text = "${prof.address}", fontSize = 10.sp, color = Colors.textSecondary)
+                        Text(text = "${prof.city}, ${prof.state}", fontSize = 10.sp, color = Colors.textSecondary)
+                        Text(text = "GSTIN: ${if (prof.gstin.isBlank()) "NA" else prof.gstin}", fontSize = 10.sp, color = Colors.textSecondary)
+                    } ?: Text("Configure profile in Settings", fontSize = 11.sp, color = Color.Red)
+                }
+
+                // Bill To Box (Right)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("BUYER:", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
+                    Spacer(modifier = Modifier.height(2.dp))
+                    party?.let { p ->
+                        Text(text = p.name, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text(text = p.address, fontSize = 10.sp, color = Colors.textSecondary)
+                        Text(text = "${p.city}, ${p.state}", fontSize = 10.sp, color = Colors.textSecondary)
+                        Text(text = "GSTIN: ${p.gstin ?: "NA"}", fontSize = 10.sp, color = Colors.textSecondary)
+                    } ?: Text(text = "Cash / Walk-in Customer", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Colors.textSecondary)
+                }
+            }
+
+            // Invoice Metadata
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("Voucher: $voucherNo", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Text("Date: ${Utils.formatDate(voucherDate)}", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Text("Mode: $paymentMode", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+
+            HorizontalDivider(color = Color.LightGray, modifier = Modifier.padding(vertical = 4.dp))
+
+            // Item Table Block
+            Text("LINE ITEMS", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
+            
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(0.5.dp, Color.LightGray, RoundedCornerShape(4.dp))
+            ) {
+                Column {
+                    // Table Header Row
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xFFF9F9F9))
+                            .padding(8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("#", fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(20.dp))
+                        Text("Product", fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.5f))
+                        Text("Qty", fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.7f))
+                        Text("Rate", fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.8f))
+                        Text("Total", fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.0f))
+                    }
+
+                    // Items List inside the table
+                    if (lineItems.isEmpty()) {
+                        Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                            Text("No items on invoice", fontSize = 12.sp, color = Color.Gray)
+                        }
+                    } else {
+                        lineItems.forEachIndexed { idx, item ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("${idx + 1}", fontSize = 11.sp, modifier = Modifier.width(20.dp))
+                                Column(modifier = Modifier.weight(1.5f)) {
+                                    Text(item.productName, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    if (item.hsnCode.isNotBlank()) {
+                                        Text("HSN: ${item.hsnCode} | GST: ${item.gstRate}%", fontSize = 9.sp, color = Colors.textSecondary)
+                                    }
+                                }
+                                Text("${item.qty} ${item.unit}", fontSize = 11.sp, modifier = Modifier.weight(0.7f))
+                                Text(String.format("%.2f", item.rate), fontSize = 11.sp, modifier = Modifier.weight(0.8f))
+                                Text(Utils.formatIndianCurrency(item.totalAmount), fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.0f))
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // Subtotals Block
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFFF9F9F9), RoundedCornerShape(8.dp))
+                    .border(0.5.dp, Color.LightGray, RoundedCornerShape(8.dp))
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Taxable Subtotal", fontSize = 11.sp, color = Colors.textSecondary)
+                    Text(Utils.formatIndianCurrency(taxableAmount), fontSize = 11.sp, color = Colors.textPrimary)
+                }
+                if (cgst > 0.0) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("CGST Total", fontSize = 11.sp, color = Colors.textSecondary)
+                        Text(Utils.formatIndianCurrency(cgst), fontSize = 11.sp, color = Colors.textPrimary)
+                    }
+                }
+                if (sgst > 0.0) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("SGST Total", fontSize = 11.sp, color = Colors.textSecondary)
+                        Text(Utils.formatIndianCurrency(sgst), fontSize = 11.sp, color = Colors.textPrimary)
+                    }
+                }
+                if (igst > 0.0) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("IGST Total", fontSize = 11.sp, color = Colors.textSecondary)
+                        Text(Utils.formatIndianCurrency(igst), fontSize = 11.sp, color = Colors.textPrimary)
+                    }
+                }
+                if (Math.abs(roundOff) > 0.0) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Round Off", fontSize = 11.sp, color = Colors.textSecondary)
+                        Text(Utils.formatIndianCurrency(roundOff), fontSize = 11.sp, color = Colors.textPrimary)
+                    }
+                }
+                HorizontalDivider(color = Color.LightGray, modifier = Modifier.padding(vertical = 4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("NET PAYABLE", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Colors.primary)
+                    Text(Utils.formatIndianCurrency(netAmount), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Colors.primary)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun StickyBottomBar(
+    netAmount: Double,
+    selectedType: String,
+    onSaveClick: (shouldPrint: Boolean) -> Unit
+) {
+    Surface(
+        tonalElevation = 8.dp,
+        shadowElevation = 8.dp,
+        color = Color.White,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "Net Amount",
+                        fontSize = 11.sp,
+                        color = Colors.textSecondary,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = Utils.formatIndianCurrency(netAmount),
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Colors.primary
+                    )
+                }
+                
+                val isSaleOrReturn = selectedType == "SALE" || selectedType == "SALE_RETURN"
+                if (isSaleOrReturn) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Button(
+                            onClick = { onSaveClick(false) },
+                            modifier = Modifier
+                                .height(44.dp)
+                                .testTag("save_and_exit_button"),
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF64748B)),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Save", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+                        
+                        Button(
+                            onClick = { onSaveClick(true) },
+                            modifier = Modifier
+                                .height(44.dp)
+                                .testTag("save_and_print_button"),
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Colors.primary),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.Assignment, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Print", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+                    }
+                } else {
+                    Button(
+                        onClick = { onSaveClick(false) },
+                        modifier = Modifier
+                            .height(44.dp)
+                            .testTag("save_voucher_button"),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Colors.primary),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 0.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Save & Post", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
+                }
+            }
+        }
     }
 }
