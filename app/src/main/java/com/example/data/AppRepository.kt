@@ -14,7 +14,6 @@ class AppRepository(private val db: AppDatabase) {
     val parties = db.partyDao().getAllParties()
     val products = db.productDao().getAllProducts()
     val vouchers = db.voucherDao().getAllVouchers()
-    val voucherItems = db.voucherItemDao().getAllItems()
     val ledgerEntries = db.ledgerDao().getAllLedgerEntries()
     val cashTransactions = db.bankCashDao().getCashTransactions()
     val bankTransactions = db.bankCashDao().getBankTransactions()
@@ -75,48 +74,6 @@ class AppRepository(private val db: AppDatabase) {
 
     suspend fun getProfileSync(): BusinessProfile? {
         return db.businessProfileDao().getProfileSync()
-    }
-
-    suspend fun exportSnapshot(): AppSyncSnapshot {
-        return AppSyncSnapshot(
-            profile = db.businessProfileDao().getProfileSync(),
-            parties = db.partyDao().getAllPartiesSync(),
-            products = db.productDao().getAllProductsSync(),
-            vouchers = db.voucherDao().getAllVouchersSync(),
-            voucherItems = db.voucherItemDao().getAllItemsSync(),
-            ledgerEntries = db.ledgerDao().getAllLedgerEntriesSync(),
-            transactions = db.bankCashDao().getAllTransactionsSync(),
-            receiptAllocations = db.receiptAllocationDao().getAllReceiptAllocationsSync(),
-            ledgerAccounts = db.ledgerAccountDao().getAllLedgerAccountsSync(),
-            billsReceivable = db.billReceivableDao().getAllBillsSync()
-        )
-    }
-
-    suspend fun importSnapshot(snapshot: AppSyncSnapshot) {
-        db.withTransaction {
-            db.businessProfileDao().deleteProfile()
-            db.receiptAllocationDao().deleteAllAllocations()
-            db.billReceivableDao().deleteAllBills()
-            db.bankCashDao().deleteAllTransactions()
-            db.ledgerDao().deleteAllLedgerEntries()
-            db.voucherItemDao().deleteAllItems()
-            db.voucherDao().deleteAllVouchers()
-            db.productDao().deleteAllProducts()
-            db.partyDao().deleteAllParties()
-            db.ledgerAccountDao().deleteAllLedgerAccounts()
-            snapshot.profile?.let { db.businessProfileDao().insertProfile(it) }
-            snapshot.parties.forEach { db.partyDao().insertParty(it) }
-            snapshot.products.forEach { db.productDao().insertProduct(it) }
-            snapshot.vouchers.forEach { db.voucherDao().insertVoucher(it) }
-            db.voucherItemDao().insertItems(snapshot.voucherItems)
-            if (snapshot.ledgerEntries.isNotEmpty()) {
-                db.ledgerDao().insertLedgerEntries(snapshot.ledgerEntries)
-            }
-            snapshot.transactions.forEach { db.bankCashDao().insertTransaction(it) }
-            snapshot.receiptAllocations.forEach { db.receiptAllocationDao().insertAllocation(it) }
-            snapshot.ledgerAccounts.forEach { db.ledgerAccountDao().insertLedgerAccount(it) }
-            snapshot.billsReceivable.forEach { db.billReceivableDao().insertBill(it) }
-        }
     }
 
     // New Ledger Account Operations

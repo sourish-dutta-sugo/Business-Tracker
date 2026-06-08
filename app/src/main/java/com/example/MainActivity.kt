@@ -8,7 +8,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -30,11 +29,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.documentfile.provider.DocumentFile
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import com.example.data.GoogleSyncUiState
 import com.example.data.YearStorageManager
 import com.example.ui.AppViewModel
 import com.example.ui.DashboardViewModel
@@ -102,50 +99,6 @@ fun MainAppEntry(
     val context = LocalContext.current
     val dbState by viewModel.dbInitState.collectAsState()
     val storageConfigured by viewModel.isStorageConfigured.collectAsState()
-    val googleSyncState by viewModel.googleSyncState.collectAsState()
-
-    val folderPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocumentTree()
-    ) { uri ->
-        if (uri == null) {
-            return@rememberLauncherForActivityResult
-        }
-        val saved = viewModel.saveZeroBookFolder(uri)
-        Toast.makeText(
-            context,
-            if (saved) "ZeroBook storage folder connected." else "Unable to connect the selected folder.",
-            Toast.LENGTH_SHORT
-        ).show()
-    }
-
-    val googleSignInLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        val data = result.data ?: return@rememberLauncherForActivityResult
-        val task = com.google.android.gms.auth.api.signin.GoogleSignIn.getSignedInAccountFromIntent(data)
-        val account = runCatching {
-            task.getResult(com.google.android.gms.common.api.ApiException::class.java)
-        }.getOrNull()
-        if (account == null) {
-            Toast.makeText(context, "Google login was not completed.", Toast.LENGTH_SHORT).show()
-            return@rememberLauncherForActivityResult
-        }
-        viewModel.completeGoogleSignIn(account) { signInResult ->
-            signInResult.onSuccess { state ->
-                Toast.makeText(
-                    context,
-                    state.statusMessage ?: "Google account connected.",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }.onFailure { error ->
-                Toast.makeText(
-                    context,
-                    error.localizedMessage ?: "Google login failed.",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
-        }
-    }
 
     when (val state = dbState) {
         is AppViewModel.DbInitState.Loading -> {
@@ -216,8 +169,8 @@ fun MainAppEntry(
         is AppViewModel.DbInitState.Success -> {
             val isSetupCompleted by viewModel.isSetupCompleted.collectAsState()
             var showSplash by remember { mutableStateOf(true) }
-            val zeroBookRootName = remember(storageConfigured) {
-                YearStorageManager.getZeroBookRootName(context)
+            val zeroBookPathLabel = remember(storageConfigured) {
+                YearStorageManager.getStoragePathLabel(context)
             }
 
             if (showSplash) {
@@ -225,8 +178,15 @@ fun MainAppEntry(
             } else if (!storageConfigured) {
                 StorageAccessScreen(
                     currentFinancialYear = viewModel.financialYear.collectAsState().value,
-                    rootFolderName = zeroBookRootName,
-                    onChooseFolder = { folderPickerLauncher.launch(null) }
+                    storagePathLabel = zeroBookPathLabel,
+                    onAllowAccess = {
+                        val saved = viewModel.grantStorageAccess()
+                        Toast.makeText(
+                            context,
+                            if (saved) "ZeroBook storage folder created." else "Unable to prepare the ZeroBook storage folder.",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
                 )
             } else {
                 // Persistent Navigation stack
@@ -260,24 +220,8 @@ fun MainAppEntry(
                 } else {
                     backstack.last()
                 }
-                val showGoogleSyncGate = isSetupCompleted && !googleSyncState.promptHandled && !googleSyncState.isSignedIn
 
-                if (showGoogleSyncGate) {
-                    GoogleSyncScreen(
-                        syncState = googleSyncState,
-                        onLogin = {
-                            val signInIntent = viewModel.buildGoogleSignInIntent()
-                            if (signInIntent != null) {
-                                googleSignInLauncher.launch(signInIntent)
-                            } else {
-                                Toast.makeText(context, "Google sign-in is not available in this build.", Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        onSkipConfirmed = {
-                            viewModel.markGoogleSyncPromptHandled()
-                        }
-                    )
-                } else if (pinRequired && !pinAuthed && isSetupCompleted) {
+                if (pinRequired && !pinAuthed && isSetupCompleted) {
                     PinLockScreen(
                         correctPin = sp.getString("lock_pin", "1234") ?: "1234",
                         onAuthentic = { pinAuthed = true }
@@ -432,7 +376,6 @@ fun MainAppEntry(
                                     SettingsScreen(
                                         viewModel = viewModel,
                                         themeViewModel = themeViewModel,
-                                        googleSyncState = googleSyncState,
                                         isDesktop = false,
                                         navigateToProducts = { navigateTo(Screen.Products) },
                                         navigateToLedgerBooks = { navigateTo(Screen.LedgerBooks) },

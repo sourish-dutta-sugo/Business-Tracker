@@ -72,7 +72,6 @@ import java.util.Calendar
 fun SettingsScreen(
     viewModel: AppViewModel,
     themeViewModel: ThemeViewModel,
-    googleSyncState: GoogleSyncUiState,
     isDesktop: Boolean = false,
     navigateToProducts: () -> Unit,
     navigateToLedgerBooks: () -> Unit,
@@ -1375,7 +1374,6 @@ fun SettingsScreen(
                             onSelect = { activeSubMode = it },
                             context = context,
                             viewModel = viewModel,
-                            googleSyncState = googleSyncState,
                             navigateToProducts = navigateToProducts,
                             navigateToLedgerBooks = navigateToLedgerBooks
                         )
@@ -1408,7 +1406,6 @@ fun SettingsScreen(
                         onSelect = { activeSubMode = it },
                         context = context,
                         viewModel = viewModel,
-                        googleSyncState = googleSyncState,
                         navigateToProducts = navigateToProducts,
                         navigateToLedgerBooks = navigateToLedgerBooks
                     )
@@ -1426,7 +1423,6 @@ fun SettingsMenuSection(
     onSelect: (String) -> Unit,
     context: android.content.Context,
     viewModel: AppViewModel,
-    googleSyncState: GoogleSyncUiState,
     navigateToProducts: () -> Unit,
     navigateToLedgerBooks: () -> Unit
 ) {
@@ -1488,30 +1484,6 @@ fun SettingsMenuSection(
             description = "Check compliance versions and regulatory details",
             icon = Icons.Default.Info,
             onClick = { onSelect("ABOUT") }
-        )
-
-        SettingsMenuCard(
-            title = if (googleSyncState.isSignedIn) "Logout Google Account" else "Connect Google Sync",
-            description = if (googleSyncState.isSignedIn) {
-                googleSyncState.accountEmail ?: "Logout from the connected Google account"
-            } else {
-                "Login later to sync progress across your devices"
-            },
-            icon = Icons.Default.Lock,
-            onClick = {
-                if (googleSyncState.isSignedIn) {
-                    viewModel.logoutGoogleAccount { result ->
-                        result.onSuccess {
-                            Toast.makeText(context, it.statusMessage ?: "Google account logged out.", Toast.LENGTH_SHORT).show()
-                        }.onFailure { error ->
-                            Toast.makeText(context, error.localizedMessage ?: "Logout failed.", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                } else {
-                    viewModel.reopenGoogleSyncPrompt()
-                    (context as? android.app.Activity)?.recreate()
-                }
-            }
         )
 
         Spacer(modifier = Modifier.height(12.dp))

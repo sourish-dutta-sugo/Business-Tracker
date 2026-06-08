@@ -1,10 +1,6 @@
 package com.example.data
 
-import android.content.ContentResolver
 import android.content.Context
-import android.net.Uri
-import androidx.core.net.toUri
-import androidx.documentfile.provider.DocumentFile
 import java.io.File
 
 data class FinancialYearSwitchResult(
@@ -15,14 +11,24 @@ data class FinancialYearSwitchResult(
 
 object YearStorageManager {
     private const val PREFS_NAME = "zerobook_storage"
-    private const val KEY_ZEROBOOK_TREE_URI = "zerobook_tree_uri"
     private const val KEY_ACTIVE_FINANCIAL_YEAR = "active_financial_year"
+    private const val KEY_STORAGE_ACCESS_GRANTED = "storage_access_granted"
 
     private const val ZEROBOOK_FOLDER_NAME = "ZeroBook"
     private const val DATABASE_FILE_NAME = "ZeroBook.db"
     private const val CSV_FILE_PREFIX = "ZeroBook_Ledger_"
 
-    fun isStorageConfigured(context: Context): Boolean = getRootUri(context) != null
+    fun isStorageConfigured(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_STORAGE_ACCESS_GRANTED, false) && ensureRootDirectory(context) != null
+
+    fun grantStorageAccess(context: Context): Boolean {
+        val root = ensureRootDirectory(context) ?: return false
+        prefs(context).edit()
+            .putBoolean(KEY_STORAGE_ACCESS_GRANTED, true)
+            .apply()
+        ensureFinancialYearDirectory(context, getActiveFinancialYear(context))
+        return root.exists()
+    }
 
     fun getActiveFinancialYear(context: Context): String =
         prefs(context).getString(KEY_ACTIVE_FINANCIAL_YEAR, "2025-26") ?: "2025-26"
@@ -31,28 +37,18 @@ object YearStorageManager {
         prefs(context).edit().putString(KEY_ACTIVE_FINANCIAL_YEAR, financialYear).apply()
     }
 
-    fun saveZeroBookRoot(context: Context, treeUri: Uri): Boolean {
-        val resolver = context.contentResolver
-        return runCatching {
-            val takeFlags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            resolver.takePersistableUriPermission(treeUri, takeFlags)
-            val root = DocumentFile.fromTreeUri(context, treeUri) ?: return false
-            val zeroBookDir = root.findFile(ZEROBOOK_FOLDER_NAME) ?: root.createDirectory(ZEROBOOK_FOLDER_NAME)
-            val zeroBookUri = zeroBookDir?.uri ?: return false
-            prefs(context).edit()
-                .putString(KEY_ZEROBOOK_TREE_URI, zeroBookUri.toString())
-                .apply()
-            true
-        }.getOrDefault(false)
+    fun getStoragePathLabel(context: Context): String {
+        val root = getRootDirectory(context)
+        return root?.absolutePath ?: "Storage path will be created automatically"
     }
 
-    fun getZeroBookRootName(context: Context): String? =
-        getZeroBookRoot(context)?.name
-
-    fun ensureFinancialYearDirectory(context: Context, financialYear: String): DocumentFile? {
-        val root = getZeroBookRoot(context) ?: return null
-        return root.findFile(financialYear) ?: root.createDirectory(financialYear)
+    fun ensureFinancialYearDirectory(context: Context, financialYear: String): File? {
+        val root = ensureRootDirectory(context) ?: return null
+        val yearDir = File(root, financialYear)
+        if (!yearDir.exists()) {
+            yearDir.mkdirs()
+        }
+        return yearDir.takeIf { it.exists() }
     }
 
     fun exportActiveDatabaseToFinancialYearFolder(
@@ -66,15 +62,9 @@ object YearStorageManager {
             return null
         }
 
-        val dbDocument = yearDir.findFile(DATABASE_FILE_NAME)
-            ?: yearDir.createFile("application/octet-stream", DATABASE_FILE_NAME)
-            ?: return null
-
-        context.contentResolver.openOutputStream(dbDocument.uri, "wt")?.use { output ->
-            dbFile.inputStream().use { input -> input.copyTo(output) }
-        } ?: return null
-
-        return "${yearDir.name}/$DATABASE_FILE_NAME"
+        val targetFile = File(yearDir, DATABASE_FILE_NAME)
+        dbFile.copyTo(targetFile, overwrite = true)
+        return targetFile.absolutePath
     }
 
     fun exportCsvToFinancialYearFolder(
@@ -84,15 +74,9 @@ object YearStorageManager {
     ): String? {
         val yearDir = ensureFinancialYearDirectory(context, financialYear) ?: return null
         val fileName = "$CSV_FILE_PREFIX${financialYear.replace("/", "-")}.csv"
-        val csvDocument = yearDir.findFile(fileName)
-            ?: yearDir.createFile("text/csv", fileName)
-            ?: return null
-
-        context.contentResolver.openOutputStream(csvDocument.uri, "wt")?.use { output ->
-            output.write(csvContent.toByteArray())
-        } ?: return null
-
-        return "${yearDir.name}/$fileName"
+        val csvFile = File(yearDir, fileName)
+        csvFile.writeText(csvContent)
+        return csvFile.absolutePath
     }
 
     fun restoreActiveDatabaseFromFinancialYearFolder(
@@ -100,17 +84,17 @@ object YearStorageManager {
         financialYear: String
     ): Boolean {
         val yearDir = ensureFinancialYearDirectory(context, financialYear) ?: return false
-        val dbDocument = yearDir.findFile(DATABASE_FILE_NAME) ?: return false
+        val sourceFile = File(yearDir, DATABASE_FILE_NAME)
+        if (!sourceFile.exists()) {
+            return false
+        }
 
         checkpointAndCloseDatabase(context)
         deleteInternalDatabaseFiles(context)
 
-        context.contentResolver.openInputStream(dbDocument.uri)?.use { input ->
-            val internalDb = context.getDatabasePath(DATABASE_FILE_NAME)
-            internalDb.parentFile?.mkdirs()
-            internalDb.outputStream().use { output -> input.copyTo(output) }
-        } ?: return false
-
+        val internalDb = context.getDatabasePath(DATABASE_FILE_NAME)
+        internalDb.parentFile?.mkdirs()
+        sourceFile.copyTo(internalDb, overwrite = true)
         reopenDatabase(context)
         return true
     }
@@ -133,7 +117,7 @@ object YearStorageManager {
         return FinancialYearSwitchResult(
             financialYear = targetFinancialYear,
             restoredExistingData = restoredExistingData,
-            storagePath = "${ZEROBOOK_FOLDER_NAME}/$targetFinancialYear"
+            storagePath = ensureFinancialYearDirectory(context, targetFinancialYear)?.absolutePath
         )
     }
 
@@ -170,14 +154,17 @@ object YearStorageManager {
         return AppDatabase.getDatabase(context)
     }
 
-    private fun getZeroBookRoot(context: Context): DocumentFile? {
-        val rootUri = getRootUri(context) ?: return null
-        return DocumentFile.fromTreeUri(context, rootUri)
+    private fun getRootDirectory(context: Context): File? {
+        val externalRoot = context.getExternalFilesDir(null)
+        return externalRoot?.let { File(it, ZEROBOOK_FOLDER_NAME) }
     }
 
-    private fun getRootUri(context: Context): Uri? {
-        val raw = prefs(context).getString(KEY_ZEROBOOK_TREE_URI, null) ?: return null
-        return raw.toUri()
+    private fun ensureRootDirectory(context: Context): File? {
+        val root = getRootDirectory(context) ?: return null
+        if (!root.exists()) {
+            root.mkdirs()
+        }
+        return root.takeIf { it.exists() }
     }
 
     private fun deleteInternalDatabaseFiles(context: Context) {
