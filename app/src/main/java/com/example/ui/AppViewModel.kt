@@ -2,16 +2,18 @@ package com.example.ui
 
 import android.app.Application
 import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.*
+import com.google.android.gms.auth.api.signin.GoogleSignInAccount
 import com.example.services.InvoiceGenerator
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
-import java.util.Calendar
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
     data class InvoicePreviewData(
@@ -44,6 +46,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val parties: StateFlow<List<Party>>
     val products: StateFlow<List<Product>>
     val vouchers: StateFlow<List<Voucher>>
+    val voucherItems: StateFlow<List<VoucherItem>>
     val ledgerEntries: StateFlow<List<LedgerEntry>>
     val transactions: StateFlow<List<BankCashTransaction>>
     val receiptAllocations: StateFlow<List<ReceiptAllocation>>
@@ -54,8 +57,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     // Current setup status
     val isSetupCompleted = MutableStateFlow(false)
-    val financialYear = MutableStateFlow("2025-26")
+    val financialYear = MutableStateFlow(YearStorageManager.getActiveFinancialYear(application))
+    val isStorageConfigured = MutableStateFlow(YearStorageManager.isStorageConfigured(application))
+    val googleSyncState = MutableStateFlow(GoogleSyncManager.buildInitialUiState(application))
     val voucherPrefillRequest = MutableStateFlow<VoucherPrefillRequest?>(null)
+    private var syncUploadJob: Job? = null
 
     init {
         var tempRepo: AppRepository? = null
@@ -93,6 +99,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         )
 
         vouchers = repository.vouchers.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+        voucherItems = repository.voucherItems.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = emptyList()
@@ -139,26 +151,34 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 isSetupCompleted.value = prof != null
                 prof?.fyLabel?.takeIf { it.isNotBlank() }?.let { savedFy ->
                     financialYear.value = savedFy
+                    YearStorageManager.setActiveFinancialYear(getApplication(), savedFy)
                 }
             }
+        }
+
+        if (googleSyncState.value.isSignedIn) {
+            startRealtimeSync(financialYear.value)
         }
     }
 
     fun insertAllocation(allocation: ReceiptAllocation) {
         viewModelScope.launch {
             repository.insertAllocation(allocation)
+            scheduleSyncUpload()
         }
     }
 
     fun insertLedgerAccount(account: LedgerAccount) {
         viewModelScope.launch {
             repository.insertLedgerAccount(account)
+            scheduleSyncUpload()
         }
     }
 
     fun deleteLedgerAccount(id: String) {
         viewModelScope.launch {
             repository.deleteLedgerAccount(id)
+            scheduleSyncUpload()
         }
     }
 
@@ -167,6 +187,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             repository.insertProfile(profile)
             isSetupCompleted.value = true
+            financialYear.value = profile.fyLabel
+            YearStorageManager.setActiveFinancialYear(getApplication(), profile.fyLabel)
+            scheduleSyncUpload()
             onSuccess()
         }
     }
@@ -174,6 +197,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun updateProfile(profile: BusinessProfile, onSuccess: () -> Unit) {
         viewModelScope.launch {
             repository.insertProfile(profile)
+            financialYear.value = profile.fyLabel
+            YearStorageManager.setActiveFinancialYear(getApplication(), profile.fyLabel)
+            scheduleSyncUpload()
             onSuccess()
         }
     }
@@ -182,6 +208,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun saveParty(party: Party, onSuccess: () -> Unit) {
         viewModelScope.launch {
             repository.insertParty(party)
+            scheduleSyncUpload()
             onSuccess()
         }
     }
@@ -193,6 +220,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteParty(partyId: String) {
         viewModelScope.launch {
             repository.deleteParty(partyId)
+            scheduleSyncUpload()
         }
     }
 
@@ -200,6 +228,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun saveProduct(product: Product, onSuccess: () -> Unit) {
         viewModelScope.launch {
             repository.insertProduct(product)
+            scheduleSyncUpload()
             onSuccess()
         }
     }
@@ -207,6 +236,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteProduct(productId: String) {
         viewModelScope.launch {
             repository.deleteProduct(productId)
+            scheduleSyncUpload()
         }
     }
 
@@ -229,6 +259,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         viewModelScope.launch {
             repository.saveAndPostVoucher(voucher, items, partyName, extras)
+            scheduleSyncUpload()
             onSuccess()
         }
     }
@@ -236,6 +267,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteVoucher(voucherId: String) {
         viewModelScope.launch {
             repository.deleteVoucher(voucherId)
+            scheduleSyncUpload()
         }
     }
 
@@ -269,6 +301,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun saveTransaction(tx: BankCashTransaction, onSuccess: () -> Unit) {
         viewModelScope.launch {
             repository.saveBankCashTransaction(tx)
+            scheduleSyncUpload()
             onSuccess()
         }
     }
@@ -276,6 +309,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteTransaction(txId: String) {
         viewModelScope.launch {
             repository.deleteTransaction(txId)
+            scheduleSyncUpload()
         }
     }
 
@@ -287,6 +321,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun loadSampleData() {
         viewModelScope.launch {
             repository.insertSampleData()
+            scheduleSyncUpload()
         }
     }
 
@@ -324,6 +359,149 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         } catch (e: Exception) {
             e.printStackTrace()
             false
+        }
+    }
+
+    fun saveZeroBookFolder(uri: Uri): Boolean {
+        val saved = YearStorageManager.saveZeroBookRoot(getApplication(), uri)
+        isStorageConfigured.value = YearStorageManager.isStorageConfigured(getApplication())
+        if (saved) {
+            viewModelScope.launch {
+                YearStorageManager.exportActiveDatabaseToFinancialYearFolder(
+                    getApplication(),
+                    financialYear.value
+                )
+            }
+        }
+        return saved
+    }
+
+    fun switchFinancialYear(
+        targetFinancialYear: String,
+        onComplete: (FinancialYearSwitchResult) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                val result = YearStorageManager.switchFinancialYear(
+                    context = getApplication(),
+                    targetFinancialYear = targetFinancialYear,
+                    currentProfile = repository.getProfileSync()
+                )
+                financialYear.value = result.financialYear
+                if (googleSyncState.value.isSignedIn) {
+                    startRealtimeSync(result.financialYear)
+                }
+                onComplete(result)
+            } catch (error: Exception) {
+                onError(error.localizedMessage ?: "Unable to switch financial year.")
+            }
+        }
+    }
+
+    fun exportActiveFinancialYearCsv(onComplete: (String?) -> Unit) {
+        viewModelScope.launch {
+            val header = "VoucherNo,Date,Type,Party,PaymentMode,TaxableAmount,CGST,SGST,IGST,RoundOff,NetAmount"
+            val sdf = java.text.SimpleDateFormat("dd-MM-yyyy HH:mm", java.util.Locale.US)
+            val body = vouchers.value.joinToString("\n") { voucher ->
+                listOf(
+                    voucher.voucherNo,
+                    sdf.format(java.util.Date(voucher.createdAt)),
+                    voucher.type,
+                    voucher.partyId ?: "Cash",
+                    voucher.paymentMode,
+                    voucher.taxableAmount,
+                    voucher.cgst,
+                    voucher.sgst,
+                    voucher.igst,
+                    voucher.roundOff,
+                    voucher.netAmount
+                ).joinToString(",")
+            }
+            val path = YearStorageManager.exportCsvToFinancialYearFolder(
+                context = getApplication(),
+                financialYear = financialYear.value,
+                csvContent = if (body.isBlank()) header else "$header\n$body"
+            )
+            onComplete(path)
+        }
+    }
+
+    fun restoreActiveFinancialYearFromFolder(
+        onComplete: (Boolean) -> Unit
+    ) {
+        viewModelScope.launch {
+            val restored = YearStorageManager.restoreActiveDatabaseFromFinancialYearFolder(
+                context = getApplication(),
+                financialYear = financialYear.value
+            )
+            onComplete(restored)
+        }
+    }
+
+    fun markGoogleSyncPromptHandled() {
+        GoogleSyncManager.markPromptHandled(getApplication())
+        googleSyncState.value = GoogleSyncManager.buildInitialUiState(getApplication())
+    }
+
+    fun reopenGoogleSyncPrompt() {
+        GoogleSyncManager.resetPromptState(getApplication())
+        googleSyncState.value = GoogleSyncManager.buildInitialUiState(getApplication())
+    }
+
+    fun buildGoogleSignInIntent() = GoogleSyncManager.buildSignInIntent(getApplication())
+
+    fun completeGoogleSignIn(
+        account: GoogleSignInAccount,
+        onComplete: (Result<GoogleSyncUiState>) -> Unit
+    ) {
+        viewModelScope.launch {
+            val result = GoogleSyncManager.completeGoogleSignIn(getApplication(), account)
+            result.onSuccess { state ->
+                googleSyncState.value = state
+                if (state.syncEnabled) {
+                    startRealtimeSync(financialYear.value)
+                    scheduleSyncUpload(immediate = true)
+                }
+            }
+            onComplete(result)
+        }
+    }
+
+    fun logoutGoogleAccount(onComplete: (Result<GoogleSyncUiState>) -> Unit) {
+        viewModelScope.launch {
+            val result = GoogleSyncManager.signOut(getApplication())
+            result.onSuccess { googleSyncState.value = it }
+            onComplete(result)
+        }
+    }
+
+    fun clearGoogleSyncStatus() {
+        googleSyncState.value = googleSyncState.value.copy(statusMessage = null)
+    }
+
+    fun refreshGoogleSyncState() {
+        googleSyncState.value = GoogleSyncManager.buildInitialUiState(getApplication())
+    }
+
+    private fun startRealtimeSync(financialYearLabel: String) {
+        GoogleSyncManager.startRealtimeSync(getApplication(), financialYearLabel) { snapshot ->
+            repository.importSnapshot(snapshot)
+        }
+    }
+
+    private fun scheduleSyncUpload(immediate: Boolean = false) {
+        syncUploadJob?.cancel()
+        syncUploadJob = viewModelScope.launch {
+            if (!immediate) {
+                kotlinx.coroutines.delay(1200)
+            }
+            val snapshot = repository.exportSnapshot()
+            GoogleSyncManager.pushSnapshot(
+                context = getApplication(),
+                financialYear = financialYear.value,
+                snapshot = snapshot
+            )
         }
     }
 

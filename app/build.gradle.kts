@@ -2,8 +2,13 @@ plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.kotlin.compose)
   alias(libs.plugins.google.devtools.ksp)
+  alias(libs.plugins.google.services) apply false
   alias(libs.plugins.roborazzi)
   alias(libs.plugins.secrets)
+}
+
+if (file("google-services.json").exists()) {
+  apply(plugin = "com.google.gms.google-services")
 }
 
 android {
@@ -90,6 +95,7 @@ dependencies {
   implementation(libs.androidx.compose.ui.graphics)
   implementation(libs.androidx.compose.ui.tooling.preview)
   implementation(libs.androidx.core.ktx)
+  implementation(libs.androidx.documentfile)
   implementation("androidx.core:core-splashscreen:1.0.1")
   // implementation(libs.androidx.datastore.preferences)
   implementation(libs.androidx.lifecycle.runtime.compose)
@@ -106,6 +112,9 @@ dependencies {
   implementation(libs.logging.interceptor)
   implementation(libs.moshi.kotlin)
   implementation(libs.okhttp)
+  implementation(libs.play.services.auth)
+  implementation(libs.firebase.auth)
+  implementation(libs.firebase.firestore)
   implementation("com.google.mlkit:text-recognition:16.0.1")
   // implementation(libs.play.services.location)
   implementation(libs.retrofit)

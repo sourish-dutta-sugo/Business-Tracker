@@ -1,11 +1,14 @@
 package com.example.ui.screens
 
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
 import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -62,44 +65,25 @@ import com.example.ui.theme.*
 import com.example.utils.copyUriToInternalStorage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.util.Calendar
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
     viewModel: AppViewModel,
     themeViewModel: ThemeViewModel,
+    googleSyncState: GoogleSyncUiState,
     isDesktop: Boolean = false,
     navigateToProducts: () -> Unit,
     navigateToLedgerBooks: () -> Unit,
     onNavigateBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val activity = context as? android.app.Activity
     val origProfile by viewModel.profile.collectAsState()
     val currentTheme by themeViewModel.currentTheme.collectAsState()
 
     var activeSubMode by remember { mutableStateOf(if (isDesktop) "BUSINESS" else "MENU") }
-    val vouchersForExport by viewModel.vouchers.collectAsState(initial = emptyList())
-
-    val createCsvLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = androidx.activity.result.contract.ActivityResultContracts.CreateDocument("text/csv")
-    ) { uri ->
-        if (uri != null) {
-            try {
-                context.contentResolver.openOutputStream(uri)?.use { output ->
-                    output.write("VoucherNo,Date,Type,Party,PaymentMode,TaxableAmount,CGST,SGST,IGST,RoundOff,NetAmount\n".toByteArray())
-                    val javaSdf = java.text.SimpleDateFormat("dd-MM-yyyy HH:mm", java.util.Locale.US)
-                    for (v in vouchersForExport) {
-                        val dateStr = javaSdf.format(java.util.Date(v.createdAt))
-                        val rowStr = "${v.voucherNo},$dateStr,${v.type},${v.partyId ?: "Cash"},${v.paymentMode},${v.taxableAmount},${v.cgst},${v.sgst},${v.igst},${v.roundOff},${v.netAmount}\n"
-                        output.write(rowStr.toByteArray())
-                    }
-                }
-                android.widget.Toast.makeText(context, "Excel (CSV) Export completed successfully!", android.widget.Toast.LENGTH_LONG).show()
-            } catch (e: Exception) {
-                android.widget.Toast.makeText(context, "Export failed: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
 
     @Composable
     fun DetailContent() {
@@ -753,10 +737,25 @@ fun SettingsScreen(
 
         val saveAction = {
             if (isValid) {
-                viewModel.financialYear.value = calculatedLabel
-                viewModel.updateProfile(profile.copy(fyLabel = calculatedLabel)) {}
-                isSaved = true
-                Toast.makeText(context, "Saved: FY $calculatedLabel", Toast.LENGTH_SHORT).show()
+                viewModel.switchFinancialYear(
+                    targetFinancialYear = calculatedLabel,
+                    onComplete = { result ->
+                        isSaved = true
+                        Toast.makeText(
+                            context,
+                            if (result.restoredExistingData) {
+                                "FY ${result.financialYear} loaded from ${result.storagePath}"
+                            } else {
+                                "FY ${result.financialYear} opened with clean entries."
+                            },
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        activity?.recreate()
+                    },
+                    onError = { message ->
+                        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                    }
+                )
             }
         }
 
@@ -876,7 +875,7 @@ fun SettingsScreen(
                                     horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
                                     Text(
-                                        text = "Financial Year: $startYearText — $calculatedEndYearText",
+                                        text = "Financial Year: $startYearText - $calculatedEndYearText",
                                         fontWeight = FontWeight.SemiBold,
                                         fontSize = 15.sp,
                                         color = AppColors.textPrimary
@@ -911,6 +910,15 @@ fun SettingsScreen(
                                 )
                             }
                         }
+
+                        if (isValid) {
+                            Text(
+                                text = "Each financial year is stored in its own ZeroBook/$calculatedLabel folder. New FY selections start clean, and earlier FY folders reload their original records.",
+                                fontSize = 12.sp,
+                                textAlign = TextAlign.Center,
+                                color = AppColors.textSecondary
+                            )
+                        }
                     }
                 }
                 
@@ -935,6 +943,7 @@ fun SettingsScreen(
         val sp = context.getSharedPreferences("zerobook_pref", Context.MODE_PRIVATE)
         var automationEnabled by remember { mutableStateOf(sp.getBoolean("email_automation_enabled", false)) }
         var triggerTimeText by remember { mutableStateOf(sp.getString("email_trigger_time", "09:00 AM") ?: "09:00 AM") }
+        var scheduledAt by remember { mutableStateOf(EmailReminderScheduler.loadScheduledAt(context)) }
         var isRunningSim by remember { mutableStateOf(false) }
         
         var logString by remember { mutableStateOf(sp.getString("email_logs_list", "") ?: "") }
@@ -945,6 +954,35 @@ fun SettingsScreen(
         val parties by viewModel.parties.collectAsState()
         val bills by viewModel.billsReceivable.collectAsState()
         val scope = rememberCoroutineScope()
+        val senderEmail = origProfile?.email?.ifBlank { "yourcompany@example.com" } ?: "yourcompany@example.com"
+        val eligibleRecipients = remember(parties, bills) {
+            bills
+                .filter { it.outstandingAmount > 0.0 }
+                .groupBy { it.partyId }
+                .mapNotNull { (partyId, groupedBills) ->
+                    val party = parties.find { it.id == partyId } ?: return@mapNotNull null
+                    if (party.email.isBlank()) return@mapNotNull null
+                    ReminderRecipientUi(
+                        partyId = party.id,
+                        partyName = party.name,
+                        email = party.email,
+                        dueAmount = groupedBills.sumOf { it.outstandingAmount }
+                    )
+                }
+                .sortedBy { it.partyName.lowercase() }
+        }
+        val selectedRecipientIds = remember { mutableStateMapOf<String, Boolean>() }
+        val scheduleSummary = scheduledAt?.let {
+            java.text.SimpleDateFormat("dd-MMM-yyyy hh:mm a", java.util.Locale.ENGLISH).format(java.util.Date(it))
+        }.orEmpty()
+
+        LaunchedEffect(eligibleRecipients) {
+            val persistedIds = EmailReminderScheduler.loadSelectedRecipients(context)
+            selectedRecipientIds.clear()
+            eligibleRecipients.forEach { recipient ->
+                selectedRecipientIds[recipient.partyId] = if (persistedIds.isEmpty()) true else persistedIds.contains(recipient.partyId)
+            }
+        }
 
         val saveSettings = {
             sp.edit()
@@ -1003,6 +1041,10 @@ fun SettingsScreen(
                                 onCheckedChange = {
                                     automationEnabled = it
                                     saveSettings()
+                                    if (!it) {
+                                        scheduledAt = null
+                                        EmailReminderScheduler.schedule(context, null)
+                                    }
                                 },
                                 colors = SwitchDefaults.colors(
                                     checkedThumbColor = AppColors.primary,
@@ -1013,7 +1055,120 @@ fun SettingsScreen(
 
                         HorizontalDivider()
 
-                        Text("DAILY RUN TRIGGER TIME", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = AppColors.textSecondary)
+                        Text("Sender", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = AppColors.textSecondary)
+                        OutlinedTextField(
+                            value = senderEmail,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Authenticated company email") },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = AppColors.primary,
+                                unfocusedBorderColor = AppColors.border
+                            )
+                        )
+
+                        HorizontalDivider()
+
+                        Text("Reminder Recipients", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = AppColors.textSecondary)
+                        if (eligibleRecipients.isEmpty()) {
+                            Text(
+                                "Only customers with email ID and outstanding due amount appear here.",
+                                fontSize = 11.sp,
+                                color = AppColors.textSecondary
+                            )
+                        } else {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "${eligibleRecipients.count { selectedRecipientIds[it.partyId] == true }} selected",
+                                    fontSize = 11.sp,
+                                    color = AppColors.textSecondary
+                                )
+                                TextButton(
+                                    onClick = {
+                                        val allSelected = eligibleRecipients.all { selectedRecipientIds[it.partyId] == true }
+                                        eligibleRecipients.forEach { selectedRecipientIds[it.partyId] = !allSelected }
+                                        EmailReminderScheduler.saveSelectedRecipients(
+                                            context,
+                                            selectedRecipientIds.filterValues { it }.keys
+                                        )
+                                    }
+                                ) {
+                                    Text("Select all", color = AppColors.primary)
+                                }
+                            }
+
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                eligibleRecipients.forEach { recipient ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .border(1.dp, AppColors.border, RoundedCornerShape(10.dp))
+                                            .padding(12.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Checkbox(
+                                            checked = selectedRecipientIds[recipient.partyId] == true,
+                                            onCheckedChange = { checked ->
+                                                selectedRecipientIds[recipient.partyId] = checked
+                                                EmailReminderScheduler.saveSelectedRecipients(
+                                                    context,
+                                                    selectedRecipientIds.filterValues { it }.keys
+                                                )
+                                            }
+                                        )
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(recipient.partyName, fontWeight = FontWeight.SemiBold, color = AppColors.textPrimary)
+                                            Text(recipient.email, fontSize = 11.sp, color = AppColors.textSecondary)
+                                        }
+                                        Text(
+                                            Utils.formatIndianCurrency(recipient.dueAmount),
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = AppColors.primary
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        HorizontalDivider()
+
+                        Text("Reminder Scheduling", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = AppColors.textSecondary)
+                        Text("Quick Options", fontSize = 11.sp, color = AppColors.textSecondary)
+                        val quickOptions = listOf(
+                            "Today" to 0,
+                            "Tomorrow" to 1,
+                            "After 2 Days" to 2,
+                            "After 3 Days" to 3,
+                            "After 7 Days" to 7
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            quickOptions.forEach { (label, daysToAdd) ->
+                                FilterChip(
+                                    selected = false,
+                                    onClick = {
+                                        val calendar = Calendar.getInstance()
+                                        calendar.add(Calendar.DAY_OF_YEAR, daysToAdd)
+                                        calendar.set(Calendar.SECOND, 0)
+                                        scheduledAt = calendar.timeInMillis
+                                        triggerTimeText = java.text.SimpleDateFormat("hh:mm a", java.util.Locale.ENGLISH)
+                                            .format(java.util.Date(calendar.timeInMillis))
+                                        saveSettings()
+                                        EmailReminderScheduler.schedule(context, scheduledAt)
+                                    },
+                                    label = { Text(label) }
+                                )
+                            }
+                        }
 
                         OutlinedTextField(
                             value = triggerTimeText,
@@ -1023,7 +1178,7 @@ fun SettingsScreen(
                             },
                             placeholder = { Text("09:00 AM") },
                             singleLine = true,
-                            label = { Text("Daily Delivery Time") },
+                            label = { Text("Preferred send time") },
                             modifier = Modifier.fillMaxWidth(),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = AppColors.primary,
@@ -1031,7 +1186,56 @@ fun SettingsScreen(
                             )
                         )
 
-                        Text("Format must match standard AM/PM format (e.g. 09:00 AM or 05:30 PM)", fontSize = 10.sp, color = AppColors.textSecondary)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Custom Option", fontSize = 11.sp, color = AppColors.textSecondary)
+                                Text(
+                                    text = if (scheduleSummary.isBlank()) "No reminder scheduled yet" else scheduleSummary,
+                                    fontWeight = FontWeight.Medium,
+                                    color = AppColors.textPrimary
+                                )
+                            }
+                            TextButton(
+                                onClick = {
+                                    val calendar = Calendar.getInstance()
+                                    DatePickerDialog(
+                                        context,
+                                        { _, year, month, dayOfMonth ->
+                                            val pickedDate = Calendar.getInstance().apply {
+                                                set(Calendar.YEAR, year)
+                                                set(Calendar.MONTH, month)
+                                                set(Calendar.DAY_OF_MONTH, dayOfMonth)
+                                            }
+                                            TimePickerDialog(
+                                                context,
+                                                { _, hourOfDay, minute ->
+                                                    pickedDate.set(Calendar.HOUR_OF_DAY, hourOfDay)
+                                                    pickedDate.set(Calendar.MINUTE, minute)
+                                                    pickedDate.set(Calendar.SECOND, 0)
+                                                    scheduledAt = pickedDate.timeInMillis
+                                                    triggerTimeText = java.text.SimpleDateFormat("hh:mm a", java.util.Locale.ENGLISH)
+                                                        .format(java.util.Date(pickedDate.timeInMillis))
+                                                    saveSettings()
+                                                    EmailReminderScheduler.schedule(context, scheduledAt)
+                                                },
+                                                calendar.get(Calendar.HOUR_OF_DAY),
+                                                calendar.get(Calendar.MINUTE),
+                                                false
+                                            ).show()
+                                        },
+                                        calendar.get(Calendar.YEAR),
+                                        calendar.get(Calendar.MONTH),
+                                        calendar.get(Calendar.DAY_OF_MONTH)
+                                    ).show()
+                                }
+                            ) {
+                                Text("Pick date & time", color = AppColors.primary)
+                            }
+                        }
                     }
                 }
 
@@ -1039,6 +1243,22 @@ fun SettingsScreen(
                     onClick = {
                         scope.launch {
                             isRunningSim = true
+                            EmailReminderScheduler.saveSelectedRecipients(
+                                context,
+                                selectedRecipientIds.filterValues { it }.keys
+                            )
+                            kotlinx.coroutines.delay(600)
+                            val sentCount = withContext(Dispatchers.IO) {
+                                EmailReminderScheduler.processReminders(context)
+                            }
+                            logString = sp.getString("email_logs_list", "") ?: ""
+                            Toast.makeText(
+                                context,
+                                if (sentCount > 0) "Reminder run completed for $sentCount recipients" else "No eligible reminders were sent",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            isRunningSim = false
+                            return@launch
                             kotlinx.coroutines.delay(1200) // simulated shoot reminder delay
                             val activeBills = bills.filter { it.outstandingAmount > 0.0 }
                             if (activeBills.isEmpty()) {
@@ -1153,8 +1373,9 @@ fun SettingsScreen(
                         SettingsMenuSection(
                             activeSubMode = activeSubMode,
                             onSelect = { activeSubMode = it },
-                            createCsvLauncher = createCsvLauncher,
                             context = context,
+                            viewModel = viewModel,
+                            googleSyncState = googleSyncState,
                             navigateToProducts = navigateToProducts,
                             navigateToLedgerBooks = navigateToLedgerBooks
                         )
@@ -1185,8 +1406,9 @@ fun SettingsScreen(
                     SettingsMenuSection(
                         activeSubMode = activeSubMode,
                         onSelect = { activeSubMode = it },
-                        createCsvLauncher = createCsvLauncher,
                         context = context,
+                        viewModel = viewModel,
+                        googleSyncState = googleSyncState,
                         navigateToProducts = navigateToProducts,
                         navigateToLedgerBooks = navigateToLedgerBooks
                     )
@@ -1202,8 +1424,9 @@ fun SettingsScreen(
 fun SettingsMenuSection(
     activeSubMode: String,
     onSelect: (String) -> Unit,
-    createCsvLauncher: androidx.activity.result.ActivityResultLauncher<String>,
     context: android.content.Context,
+    viewModel: AppViewModel,
+    googleSyncState: GoogleSyncUiState,
     navigateToProducts: () -> Unit,
     navigateToLedgerBooks: () -> Unit
 ) {
@@ -1267,6 +1490,30 @@ fun SettingsMenuSection(
             onClick = { onSelect("ABOUT") }
         )
 
+        SettingsMenuCard(
+            title = if (googleSyncState.isSignedIn) "Logout Google Account" else "Connect Google Sync",
+            description = if (googleSyncState.isSignedIn) {
+                googleSyncState.accountEmail ?: "Logout from the connected Google account"
+            } else {
+                "Login later to sync progress across your devices"
+            },
+            icon = Icons.Default.Lock,
+            onClick = {
+                if (googleSyncState.isSignedIn) {
+                    viewModel.logoutGoogleAccount { result ->
+                        result.onSuccess {
+                            Toast.makeText(context, it.statusMessage ?: "Google account logged out.", Toast.LENGTH_SHORT).show()
+                        }.onFailure { error ->
+                            Toast.makeText(context, error.localizedMessage ?: "Logout failed.", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                } else {
+                    viewModel.reopenGoogleSyncPrompt()
+                    (context as? android.app.Activity)?.recreate()
+                }
+            }
+        )
+
         Spacer(modifier = Modifier.height(12.dp))
 
         // Backup Section Card
@@ -1289,7 +1536,13 @@ fun SettingsMenuSection(
                 ) {
                     Button(
                         onClick = {
-                            createCsvLauncher.launch("ZeroBook_Ledger.csv")
+                            viewModel.exportActiveFinancialYearCsv { path ->
+                                Toast.makeText(
+                                    context,
+                                    if (path != null) "CSV exported to $path" else "Export failed. Choose the ZeroBook folder again if needed.",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
                         },
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.weight(1f),
@@ -1302,7 +1555,16 @@ fun SettingsMenuSection(
                     }
                     OutlinedButton(
                         onClick = {
-                            Toast.makeText(context, "Backup recovered perfectly! Database state synchronized.", Toast.LENGTH_LONG).show()
+                            viewModel.restoreActiveFinancialYearFromFolder { restored ->
+                                Toast.makeText(
+                                    context,
+                                    if (restored) "Active FY restored from the ZeroBook folder." else "No saved data file was found for this FY folder.",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                                if (restored) {
+                                    (context as? android.app.Activity)?.recreate()
+                                }
+                            }
                         },
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.weight(1f)
@@ -1375,7 +1637,7 @@ private fun ThemePickerRow(
         Triple("BLUE", "Blue", Color(0xFF1A73E8)),
         Triple("GREEN", "Green", Color(0xFF1E8A3C)),
         Triple("PURPLE", "Purple", Color(0xFF6200EA)),
-        Triple("DARK", "Dark", Color(0xFF121212))
+        Triple("TEAL", "Teal", Color(0xFF0F9D8A))
     )
 
     Row(

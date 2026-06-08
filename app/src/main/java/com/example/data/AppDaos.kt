@@ -13,12 +13,18 @@ interface BusinessProfileDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertProfile(profile: BusinessProfile)
+
+    @Query("DELETE FROM business_profile")
+    suspend fun deleteProfile()
 }
 
 @Dao
 interface PartyDao {
     @Query("SELECT * FROM parties ORDER BY name ASC")
     fun getAllParties(): Flow<List<Party>>
+
+    @Query("SELECT * FROM parties ORDER BY name ASC")
+    suspend fun getAllPartiesSync(): List<Party>
 
     @Query("SELECT * FROM parties WHERE id = :id LIMIT 1")
     suspend fun getPartyById(id: String): Party?
@@ -28,12 +34,18 @@ interface PartyDao {
 
     @Query("DELETE FROM parties WHERE id = :id")
     suspend fun deleteParty(id: String)
+
+    @Query("DELETE FROM parties")
+    suspend fun deleteAllParties()
 }
 
 @Dao
 interface ProductDao {
     @Query("SELECT * FROM products ORDER BY name ASC")
     fun getAllProducts(): Flow<List<Product>>
+
+    @Query("SELECT * FROM products ORDER BY name ASC")
+    suspend fun getAllProductsSync(): List<Product>
 
     @Query("SELECT * FROM products WHERE id = :id LIMIT 1")
     suspend fun getProductById(id: String): Product?
@@ -43,12 +55,18 @@ interface ProductDao {
 
     @Query("DELETE FROM products WHERE id = :id")
     suspend fun deleteProduct(id: String)
+
+    @Query("DELETE FROM products")
+    suspend fun deleteAllProducts()
 }
 
 @Dao
 interface VoucherDao {
     @Query("SELECT * FROM vouchers ORDER BY date DESC, createdAt DESC")
     fun getAllVouchers(): Flow<List<Voucher>>
+
+    @Query("SELECT * FROM vouchers ORDER BY date DESC, createdAt DESC")
+    suspend fun getAllVouchersSync(): List<Voucher>
 
     @Query("SELECT * FROM vouchers WHERE id = :id LIMIT 1")
     suspend fun getVoucherById(id: String): Voucher?
@@ -64,10 +82,19 @@ interface VoucherDao {
 
     @Query("DELETE FROM vouchers WHERE id = :id")
     suspend fun deleteVoucher(id: String)
+
+    @Query("DELETE FROM vouchers")
+    suspend fun deleteAllVouchers()
 }
 
 @Dao
 interface VoucherItemDao {
+    @Query("SELECT * FROM voucher_items")
+    fun getAllItems(): Flow<List<VoucherItem>>
+
+    @Query("SELECT * FROM voucher_items")
+    suspend fun getAllItemsSync(): List<VoucherItem>
+
     @Query("SELECT * FROM voucher_items WHERE voucherId = :voucherId")
     fun getItemsForVoucher(voucherId: String): Flow<List<VoucherItem>>
 
@@ -79,12 +106,18 @@ interface VoucherItemDao {
 
     @Query("DELETE FROM voucher_items WHERE voucherId = :voucherId")
     suspend fun deleteItemsForVoucher(voucherId: String)
+
+    @Query("DELETE FROM voucher_items")
+    suspend fun deleteAllItems()
 }
 
 @Dao
 interface LedgerDao {
     @Query("SELECT * FROM ledger_entries ORDER BY date DESC, createdAt DESC")
     fun getAllLedgerEntries(): Flow<List<LedgerEntry>>
+
+    @Query("SELECT * FROM ledger_entries ORDER BY date DESC, createdAt DESC")
+    suspend fun getAllLedgerEntriesSync(): List<LedgerEntry>
 
     @Query("SELECT * FROM ledger_entries WHERE accountHead = :accountHead ORDER BY date DESC, createdAt DESC")
     fun getLedgerEntriesByAccount(accountHead: String): Flow<List<LedgerEntry>>
@@ -97,12 +130,18 @@ interface LedgerDao {
 
     @Query("DELETE FROM ledger_entries WHERE voucherId = :voucherId")
     suspend fun deleteLedgerEntriesForVoucher(voucherId: String)
+
+    @Query("DELETE FROM ledger_entries")
+    suspend fun deleteAllLedgerEntries()
 }
 
 @Dao
 interface BankCashDao {
     @Query("SELECT * FROM bank_cash_transactions ORDER BY date DESC, createdAt DESC")
     fun getAllTransactions(): Flow<List<BankCashTransaction>>
+
+    @Query("SELECT * FROM bank_cash_transactions ORDER BY date DESC, createdAt DESC")
+    suspend fun getAllTransactionsSync(): List<BankCashTransaction>
 
     @Query("SELECT * FROM bank_cash_transactions WHERE mode = 'CASH' ORDER BY date DESC, createdAt DESC")
     fun getCashTransactions(): Flow<List<BankCashTransaction>>
@@ -118,6 +157,9 @@ interface BankCashDao {
 
     @Query("DELETE FROM bank_cash_transactions WHERE narration LIKE '%' || :voucherId || '%'")
     suspend fun deleteTransactionsByVoucher(voucherId: String)
+
+    @Query("DELETE FROM bank_cash_transactions")
+    suspend fun deleteAllTransactions()
 }
 
 @Dao
@@ -127,6 +169,9 @@ interface ReceiptAllocationDao {
 
     @Query("SELECT * FROM receipt_allocations")
     fun getAllReceiptAllocations(): Flow<List<ReceiptAllocation>>
+
+    @Query("SELECT * FROM receipt_allocations")
+    suspend fun getAllReceiptAllocationsSync(): List<ReceiptAllocation>
 
     @Query("SELECT * FROM receipt_allocations WHERE invoiceId = :invoiceId")
     suspend fun getAllocationsForInvoiceSync(invoiceId: String): List<ReceiptAllocation>
@@ -139,6 +184,9 @@ interface ReceiptAllocationDao {
 
     @Query("DELETE FROM receipt_allocations WHERE invoiceId = :invoiceId")
     suspend fun deleteAllocationsByInvoice(invoiceId: String)
+
+    @Query("DELETE FROM receipt_allocations")
+    suspend fun deleteAllAllocations()
 }
 
 @Dao
@@ -172,6 +220,9 @@ interface LedgerAccountDao {
     
     @Query("DELETE FROM ledger_accounts WHERE partyId = :partyId")
     suspend fun deleteLedgerAccountByParty(partyId: String)
+
+    @Query("DELETE FROM ledger_accounts")
+    suspend fun deleteAllLedgerAccounts()
 }
 
 @Dao
@@ -194,4 +245,3 @@ interface BillReceivableDao {
     @Query("DELETE FROM bills_receivable")
     suspend fun deleteAllBills()
 }
-
