@@ -74,6 +74,7 @@ fun BankCashScreen(
         )
     } else {
         Scaffold(
+            modifier = Modifier.fillMaxSize(),
             containerColor = AppColors.screenBg,
             topBar = {
                 TopAppBar(
@@ -97,12 +98,17 @@ fun BankCashScreen(
                 }
             }
         ) { innerPadding ->
-            Column(
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(AppColors.screenBg)
                     .padding(innerPadding)
-                    .padding(16.dp),
+                    .imePadding()
+            ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(start = 16.dp, end = 16.dp, bottom = 100.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 // Large balance summary card
@@ -174,7 +180,10 @@ fun BankCashScreen(
                 } else {
                     LazyColumn(
                         verticalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .imePadding(),
+                        contentPadding = PaddingValues(start = 0.dp, end = 0.dp, bottom = 120.dp)
                     ) {
                         items(matchedTransactions) { tx ->
                             Card(
@@ -222,6 +231,7 @@ fun BankCashScreen(
                     }
                 }
             }
+            }
         }
     }
 }
@@ -250,6 +260,7 @@ fun AddTransactionForm(
     val scrollState = rememberScrollState()
 
     Scaffold(
+        modifier = Modifier.fillMaxSize(),
         containerColor = AppColors.screenBg,
         topBar = {
             TopAppBar(
@@ -263,13 +274,19 @@ fun AddTransactionForm(
             )
         }
     ) { innerPadding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(AppColors.screenBg)
-                .verticalScroll(scrollState)
                 .padding(innerPadding)
-                .padding(16.dp),
+                .imePadding()
+        ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(scrollState)
+                .imePadding()
+                .padding(start = 16.dp, end = 16.dp, bottom = 100.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             // Receipt vs payment chips
@@ -431,6 +448,7 @@ fun AddTransactionForm(
                 Icon(imageVector = Icons.Default.Check, contentDescription = null, modifier = Modifier.padding(end = 4.dp))
                 Text("Commit Transaction", fontWeight = FontWeight.Bold)
             }
+        }
         }
     }
 }

@@ -47,6 +47,7 @@ fun LedgerListScreen(
     }
 
     Scaffold(
+        modifier = Modifier.fillMaxSize(),
         containerColor = AppColors.screenBg,
         topBar = {
             TopAppBar(
@@ -64,12 +65,17 @@ fun LedgerListScreen(
             )
         }
     ) { innerPadding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(AppColors.screenBg)
                 .padding(innerPadding)
-                .padding(16.dp)
+                .imePadding()
+        ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(start = 16.dp, end = 16.dp, bottom = 100.dp)
         ) {
             Text(
                 text = "Full ledger chart with current debit / credit balances",
@@ -84,7 +90,10 @@ fun LedgerListScreen(
                 }
             } else {
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .imePadding(),
+                    contentPadding = PaddingValues(start = 0.dp, end = 0.dp, bottom = 120.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     groupedAccounts.forEach { (groupName, accounts) ->
@@ -118,6 +127,7 @@ fun LedgerListScreen(
                 }
             }
         }
+        }
     }
 
     viewingLedger?.let { account ->
@@ -128,7 +138,12 @@ fun LedgerListScreen(
             textContentColor = AppColors.textSecondary,
             title = { Text(account.name, fontWeight = FontWeight.Bold, color = AppColors.textPrimary) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(
+                    modifier = Modifier
+                        .verticalScroll(rememberScrollState())
+                        .imePadding(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     Text("Group: ${account.groupName}", color = AppColors.textPrimary)
                     Text("Opening Balance: ${account.openingBalance}", color = AppColors.textPrimary)
                     Text("Balance Type: ${account.balanceType}", color = AppColors.textPrimary)

@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
 
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -34,6 +35,7 @@ import androidx.compose.material.icons.outlined.Upload
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
@@ -65,6 +67,8 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import com.example.utils.copyUriToInternalStorage
+import com.example.utils.HsnEntry
+import com.example.utils.HsnLookup
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.launch
 import java.io.File
@@ -491,6 +495,10 @@ fun NewVoucherScreen(
 
     val coroutineScope = rememberCoroutineScope()
     val isEditMode = !voucherId.isNullOrBlank()
+    val configuration = LocalConfiguration.current
+    val isTablet = configuration.screenWidthDp >= 840
+    val isLandscapeMobile = configuration.screenWidthDp >= 600 && !isTablet
+    val useStackedChargeLayout = !isTablet || isLandscapeMobile
     
     var step by remember { mutableStateOf(voucherId?.let { 2 } ?: 1) } // 1: Type selection, 2: Form & Line items
     
@@ -2033,16 +2041,122 @@ fun NewVoucherScreen(
                                     mutableStateOf(isTransportCharge && hasTransportDetails)
                                 }
 
-                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        verticalAlignment = Alignment.Top
-                                    ) {
-                                        Box(modifier = Modifier.weight(1.2f)) {
-                                            OutlinedTextField(
-                                                value = if (isOtherCharge) "Other" else charge.label,
-                                                onValueChange = {},
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .animateContentSize(),
+                                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFFFF)),
+                                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    if (useStackedChargeLayout) {
+                                        Column(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Box(modifier = Modifier.fillMaxWidth()) {
+                                                OutlinedTextField(
+                                                    value = if (isOtherCharge) "Other" else charge.label,
+                                                    onValueChange = {},
+                                                    readOnly = true,
+                                                    label = { Text("Charge type", color = Color(0xFF444444)) },
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    trailingIcon = {
+                                                        Icon(
+                                                            Icons.Default.KeyboardArrowDown,
+                                                            contentDescription = null,
+                                                            modifier = Modifier.clickable { chargeTypeExpanded = true }
+                                                        )
+                                                    },
+                                                    colors = OutlinedTextFieldDefaults.colors(
+                                                        focusedContainerColor = Color(0xFFFFFFFF),
+                                                        unfocusedContainerColor = Color(0xFFFFFFFF),
+                                                        focusedTextColor = Color(0xFF0D0D0D),
+                                                        unfocusedTextColor = Color(0xFF0D0D0D)
+                                                    )
+                                                )
+                                                DropdownMenu(
+                                                    expanded = chargeTypeExpanded,
+                                                    onDismissRequest = { chargeTypeExpanded = false },
+                                                    modifier = Modifier.background(Color(0xFFFFFFFF))
+                                                ) {
+                                                    chargeTypes.forEach { type ->
+                                                        DropdownMenuItem(
+                                                            text = { Text(type, color = Color(0xFF0D0D0D)) },
+                                                            onClick = {
+                                                                additionalCharges[index] = charge.copy(label = if (type == "Other") "" else type)
+                                                                if (isTransportChargeType(type)) {
+                                                                    transportExpanded = transportExpanded || hasTransportDetails
+                                                                }
+                                                                chargeTypeExpanded = false
+                                                            },
+                                                            colors = MenuDefaults.itemColors(textColor = Color(0xFF0D0D0D))
+                                                        )
+                                                    }
+                                                }
+                                            }
+
+                                            if (isOtherCharge) {
+                                                OutlinedTextField(
+                                                    value = charge.label,
+                                                    onValueChange = { additionalCharges[index] = charge.copy(label = it) },
+                                                    label = { Text("Label", color = Color(0xFF444444)) },
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    colors = OutlinedTextFieldDefaults.colors(
+                                                        focusedContainerColor = Color(0xFFFFFFFF),
+                                                        unfocusedContainerColor = Color(0xFFFFFFFF),
+                                                        focusedTextColor = Color(0xFF0D0D0D),
+                                                        unfocusedTextColor = Color(0xFF0D0D0D)
+                                                    )
+                                                )
+                                            }
+
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                OutlinedTextField(
+                                                    value = if (charge.amount == 0.0) "" else charge.amount.toString(),
+                                                    onValueChange = {
+                                                        additionalCharges[index] = charge.copy(amount = filterDecimalInput(it).toDoubleOrNull() ?: 0.0)
+                                                    },
+                                                    label = { Text("Amount", color = Color(0xFF444444)) },
+                                                    modifier = Modifier.weight(1f),
+                                                    prefix = { Text("Rs", color = Color(0xFF0D0D0D)) },
+                                                    keyboardOptions = KeyboardOptions(
+                                                        keyboardType = KeyboardType.Decimal,
+                                                        imeAction = ImeAction.Next
+                                                    ),
+                                                    colors = OutlinedTextFieldDefaults.colors(
+                                                        focusedContainerColor = Color(0xFFFFFFFF),
+                                                        unfocusedContainerColor = Color(0xFFFFFFFF),
+                                                        focusedTextColor = Color(0xFF0D0D0D),
+                                                        unfocusedTextColor = Color(0xFF0D0D0D)
+                                                    )
+                                                )
+
+                                                IconButton(onClick = { additionalCharges.removeAt(index) }) {
+                                                    Icon(Icons.Default.Delete, contentDescription = "Delete charge", tint = Color(0xFFC62828))
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalAlignment = Alignment.Top
+                                        ) {
+                                            Box(modifier = Modifier.weight(1.2f)) {
+                                                OutlinedTextField(
+                                                    value = if (isOtherCharge) "Other" else charge.label,
+                                                    onValueChange = {},
                                                 readOnly = true,
                                                 label = { Text("Charge type", color = Color(0xFF444444)) },
                                                 modifier = Modifier.fillMaxWidth(),
@@ -2081,12 +2195,30 @@ fun NewVoucherScreen(
                                             }
                                         }
 
-                                        if (isOtherCharge) {
+                                            if (isOtherCharge) {
+                                                OutlinedTextField(
+                                                    value = charge.label,
+                                                    onValueChange = { additionalCharges[index] = charge.copy(label = it) },
+                                                    label = { Text("Label", color = Color(0xFF444444)) },
+                                                    modifier = Modifier.weight(1f),
+                                                    colors = OutlinedTextFieldDefaults.colors(
+                                                        focusedContainerColor = Color(0xFFFFFFFF),
+                                                        unfocusedContainerColor = Color(0xFFFFFFFF),
+                                                        focusedTextColor = Color(0xFF0D0D0D),
+                                                        unfocusedTextColor = Color(0xFF0D0D0D)
+                                                    )
+                                                )
+                                            }
+
                                             OutlinedTextField(
-                                                value = charge.label,
-                                                onValueChange = { additionalCharges[index] = charge.copy(label = it) },
-                                                label = { Text("Label", color = Color(0xFF444444)) },
-                                                modifier = Modifier.weight(1f),
+                                                value = if (charge.amount == 0.0) "" else charge.amount.toString(),
+                                                onValueChange = {
+                                                    additionalCharges[index] = charge.copy(amount = filterDecimalInput(it).toDoubleOrNull() ?: 0.0)
+                                                },
+                                                label = { Text("Amount", color = Color(0xFF444444)) },
+                                                modifier = Modifier.weight(0.9f),
+                                                prefix = { Text("Rs", color = Color(0xFF0D0D0D)) },
+                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                                 colors = OutlinedTextFieldDefaults.colors(
                                                     focusedContainerColor = Color(0xFFFFFFFF),
                                                     unfocusedContainerColor = Color(0xFFFFFFFF),
@@ -2094,27 +2226,10 @@ fun NewVoucherScreen(
                                                     unfocusedTextColor = Color(0xFF0D0D0D)
                                                 )
                                             )
-                                        }
 
-                                        OutlinedTextField(
-                                            value = if (charge.amount == 0.0) "" else charge.amount.toString(),
-                                            onValueChange = {
-                                                additionalCharges[index] = charge.copy(amount = filterDecimalInput(it).toDoubleOrNull() ?: 0.0)
-                                            },
-                                            label = { Text("Amount", color = Color(0xFF444444)) },
-                                            modifier = Modifier.weight(0.9f),
-                                            prefix = { Text("Rs", color = Color(0xFF0D0D0D)) },
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                            colors = OutlinedTextFieldDefaults.colors(
-                                                focusedContainerColor = Color(0xFFFFFFFF),
-                                                unfocusedContainerColor = Color(0xFFFFFFFF),
-                                                focusedTextColor = Color(0xFF0D0D0D),
-                                                unfocusedTextColor = Color(0xFF0D0D0D)
-                                            )
-                                        )
-
-                                        IconButton(onClick = { additionalCharges.removeAt(index) }) {
-                                            Icon(Icons.Default.Delete, contentDescription = "Delete charge", tint = Color(0xFFC62828))
+                                            IconButton(onClick = { additionalCharges.removeAt(index) }) {
+                                                Icon(Icons.Default.Delete, contentDescription = "Delete charge", tint = Color(0xFFC62828))
+                                            }
                                         }
                                     }
 
@@ -2139,7 +2254,7 @@ fun NewVoucherScreen(
                                             Column(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
-                                                    .padding(start = 8.dp)
+                                                    .padding(top = 8.dp)
                                                     .border(1.dp, Color(0xFFE0E0E0), RoundedCornerShape(8.dp))
                                                     .padding(12.dp),
                                                 verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -2149,8 +2264,13 @@ fun NewVoucherScreen(
                                                     onValueChange = { transportName = it },
                                                     label = { Text("Transporter Name", color = Color(0xFF444444)) },
                                                     placeholder = { Text("Transport agency or person name") },
-                                                    modifier = Modifier.fillMaxWidth(),
-                                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(bottom = 6.dp),
+                                                    keyboardOptions = KeyboardOptions(
+                                                        keyboardType = KeyboardType.Text,
+                                                        imeAction = ImeAction.Next
+                                                    ),
                                                     colors = OutlinedTextFieldDefaults.colors(
                                                         focusedContainerColor = Color(0xFFFFFFFF),
                                                         unfocusedContainerColor = Color(0xFFFFFFFF),
@@ -2170,8 +2290,11 @@ fun NewVoucherScreen(
                                                     onValueChange = { transportVehicle = it.uppercase() },
                                                     label = { Text("Vehicle No. (optional)", color = Color(0xFF444444)) },
                                                     placeholder = { Text("e.g. WB-01-AB-1234") },
-                                                    modifier = Modifier.fillMaxWidth(),
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(bottom = 6.dp),
                                                     keyboardOptions = KeyboardOptions(
+                                                        keyboardType = KeyboardType.Text,
                                                         capitalization = KeyboardCapitalization.Characters,
                                                         imeAction = ImeAction.Next
                                                     ),
@@ -2187,8 +2310,13 @@ fun NewVoucherScreen(
                                                     onValueChange = { transportLrNo = it },
                                                     label = { Text("LR/GR No. (optional)", color = Color(0xFF444444)) },
                                                     placeholder = { Text("Lorry Receipt or GR number") },
-                                                    modifier = Modifier.fillMaxWidth(),
-                                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(bottom = 6.dp),
+                                                    keyboardOptions = KeyboardOptions(
+                                                        keyboardType = KeyboardType.Text,
+                                                        imeAction = ImeAction.Next
+                                                    ),
                                                     colors = OutlinedTextFieldDefaults.colors(
                                                         focusedContainerColor = Color(0xFFFFFFFF),
                                                         unfocusedContainerColor = Color(0xFFFFFFFF),
@@ -2201,8 +2329,11 @@ fun NewVoucherScreen(
                                                     onValueChange = { transportGstin = it.uppercase() },
                                                     label = { Text("Transporter GSTIN (optional)", color = Color(0xFF444444)) },
                                                     placeholder = { Text("15-digit GSTIN if registered") },
-                                                    modifier = Modifier.fillMaxWidth(),
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(bottom = 6.dp),
                                                     keyboardOptions = KeyboardOptions(
+                                                        keyboardType = KeyboardType.Text,
                                                         capitalization = KeyboardCapitalization.Characters,
                                                         imeAction = ImeAction.Next
                                                     ),
@@ -2218,8 +2349,13 @@ fun NewVoucherScreen(
                                                     onValueChange = { transportDestination = it },
                                                     label = { Text("Destination (optional)", color = Color(0xFF444444)) },
                                                     placeholder = { Text("Delivery destination") },
-                                                    modifier = Modifier.fillMaxWidth(),
-                                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(bottom = 6.dp),
+                                                    keyboardOptions = KeyboardOptions(
+                                                        keyboardType = KeyboardType.Text,
+                                                        imeAction = ImeAction.Next
+                                                    ),
                                                     colors = OutlinedTextFieldDefaults.colors(
                                                         focusedContainerColor = Color(0xFFFFFFFF),
                                                         unfocusedContainerColor = Color(0xFFFFFFFF),
@@ -2230,6 +2366,7 @@ fun NewVoucherScreen(
                                             }
                                         }
                                     }
+                                }
                                 }
                             }
                         }
@@ -3210,6 +3347,8 @@ fun NewVoucherScreen(
     if (showQuickAddProductDialog) {
         var newProdName by remember(showQuickAddProductDialog) { mutableStateOf(quickAddInitialProductName) }
         var newProdHsn by remember { mutableStateOf("") }
+        var quickHsnSuggestions by remember { mutableStateOf<List<HsnEntry>>(emptyList()) }
+        var wasQuickHsnAutoFilled by remember { mutableStateOf(false) }
         var newProdUnit by remember { mutableStateOf("PCS") }
         var newProdSaleRate by remember { mutableStateOf("") }
         var newProdPurchaseRate by remember { mutableStateOf("") }
@@ -3224,6 +3363,15 @@ fun NewVoucherScreen(
 
         val units = listOf("PCS", "KG", "GM", "MG", "LTR", "ML", "BOX", "BAG", "NOS", "MTR")
         val gstRates = listOf("0.0", "5.0", "12.0", "18.0", "28.0")
+
+        LaunchedEffect(newProdName) {
+            if (newProdName.length >= 3) {
+                delay(400)
+                quickHsnSuggestions = HsnLookup.search(newProdName)
+            } else {
+                quickHsnSuggestions = emptyList()
+            }
+        }
 
         AlertDialog(
             onDismissRequest = {
@@ -3241,13 +3389,25 @@ fun NewVoucherScreen(
                 ) {
                     RetailTextField(
                         value = newProdName,
-                        onValueChange = { newProdName = it },
+                        onValueChange = {
+                            newProdName = it
+                            if (wasQuickHsnAutoFilled) {
+                                newProdHsn = ""
+                                wasQuickHsnAutoFilled = false
+                            }
+                        },
                         label = "Product Name *"
                     )
 
                     ProductOptionalFields(
                         hsnCode = newProdHsn,
                         onHsnChange = { newProdHsn = it },
+                        hsnSuggestions = quickHsnSuggestions,
+                        onHsnSelected = {
+                            newProdHsn = it
+                            wasQuickHsnAutoFilled = true
+                            quickHsnSuggestions = emptyList()
+                        },
                         batchEnabled = batchEnabled,
                         onBatchEnabledChange = { batchEnabled = it },
                         batchNumber = batchNumber,

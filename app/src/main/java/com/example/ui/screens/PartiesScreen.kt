@@ -90,6 +90,7 @@ fun PartiesScreen(
             // Master Pane (Parties List)
             Box(modifier = Modifier.width(360.dp).fillMaxHeight()) {
                 Scaffold(
+                    modifier = Modifier.fillMaxSize(),
                     floatingActionButton = {
                         FloatingActionButton(
                             onClick = { showAddPartyForm = true },
@@ -101,12 +102,17 @@ fun PartiesScreen(
                         }
                     }
                 ) { innerPadding ->
-                    Column(
+                    Box(
                         modifier = Modifier
                             .fillMaxSize()
                             .background(AppColors.screenBg)
                             .padding(innerPadding)
-                            .padding(16.dp),
+                            .imePadding()
+                    ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(start = 16.dp, end = 16.dp, bottom = 100.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Text(
@@ -153,7 +159,10 @@ fun PartiesScreen(
                         } else {
                             LazyColumn(
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.fillMaxSize()
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .imePadding(),
+                                contentPadding = PaddingValues(start = 0.dp, end = 0.dp, bottom = 120.dp)
                             ) {
                                 items(filteredParties) { party ->
                                     val currentBal = partyBalances[party.id] ?: 0.0
@@ -230,6 +239,7 @@ fun PartiesScreen(
                             }
                         }
                     }
+                    }
                 }
             }
 
@@ -269,6 +279,7 @@ fun PartiesScreen(
             )
         } else {
             Scaffold(
+                modifier = Modifier.fillMaxSize(),
                 floatingActionButton = {
                     FloatingActionButton(
                         onClick = { showAddPartyForm = true },
@@ -280,12 +291,17 @@ fun PartiesScreen(
                     }
                 }
             ) { innerPadding ->
-                Column(
+                Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(AppColors.screenBg)
                         .padding(innerPadding)
-                        .padding(16.dp),
+                        .imePadding()
+                ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(start = 16.dp, end = 16.dp, bottom = 100.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text(
@@ -357,7 +373,10 @@ fun PartiesScreen(
                     } else {
                         LazyColumn(
                             verticalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.fillMaxSize()
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .imePadding(),
+                            contentPadding = PaddingValues(start = 0.dp, end = 0.dp, bottom = 120.dp)
                         ) {
                             items(filteredParties) { party ->
                                 val currentBal = partyBalances[party.id] ?: 0.0
@@ -428,6 +447,7 @@ fun PartiesScreen(
                         }
                     }
                 }
+                }
             }
         }
     }
@@ -458,6 +478,7 @@ fun AddPartyForm(
     val scrollState = rememberScrollState()
 
     Scaffold(
+        modifier = Modifier.fillMaxSize(),
         containerColor = AppColors.screenBg,
         topBar = {
             TopAppBar(
@@ -471,14 +492,19 @@ fun AddPartyForm(
             )
         }
     ) { innerPadding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(AppColors.screenBg)
+                .padding(innerPadding)
+                .imePadding()
+        ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
                 .verticalScroll(scrollState)
                 .imePadding()
-                .padding(innerPadding)
-                .padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 80.dp),
+                .padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 100.dp),
             verticalArrangement = Arrangement.spacedBy(11.dp)
         ) {
             OutlinedTextField(
@@ -673,6 +699,7 @@ fun AddPartyForm(
                 Text("Save Party", fontWeight = FontWeight.Bold)
             }
         }
+        }
     }
 }
 
@@ -694,6 +721,7 @@ fun PartyDetailScreen(
     }
 
     Scaffold(
+        modifier = Modifier.fillMaxSize(),
         containerColor = AppColors.screenBg,
         topBar = {
             TopAppBar(
@@ -736,7 +764,8 @@ fun PartyDetailScreen(
                     .fillMaxSize()
                     .background(AppColors.screenBg)
                     .padding(innerPadding)
-                    .padding(16.dp),
+                    .imePadding()
+                    .padding(start = 16.dp, end = 16.dp, bottom = 100.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 // Party Details Box
@@ -858,7 +887,12 @@ fun PartyDetailScreen(
                                 Text("No ledger activities recorded", fontSize = 13.sp, color = Color.Gray)
                             }
                         } else {
-                            LazyColumn(modifier = Modifier.fillMaxSize()) {
+                            LazyColumn(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .imePadding(),
+                                contentPadding = PaddingValues(start = 0.dp, end = 0.dp, bottom = 120.dp)
+                            ) {
                                 items(statementRows) { row ->
                                     Row(
                                         modifier = Modifier

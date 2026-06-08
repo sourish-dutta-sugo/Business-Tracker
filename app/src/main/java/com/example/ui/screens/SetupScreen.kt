@@ -69,7 +69,7 @@ fun SetupScreen(
     var isGstinLoading by remember { mutableStateOf(false) }
     var isIfscLoading by remember { mutableStateOf(false) }
     var pinLookupMessage by remember { mutableStateOf("") }
-    var pinLookupSuccess by remember { mutableStateOf(false) }
+    var pinLookupError by remember { mutableStateOf("") }
 
     // Validation styling states
     var gstinError by remember { mutableStateOf(false) }
@@ -80,30 +80,29 @@ fun SetupScreen(
 
     LaunchedEffect(pin) {
         if (pin.length == 6 && pin.all { it.isDigit() }) {
-            delay(300)
+            delay(1000)
             isPinLoading = true
             pinError = false
             val result = fetchPinLookup(pin)
             isPinLoading = false
             if (result != null) {
                 city = result.city
-                pinLookupMessage = "City: ${result.city}, ${result.state}"
-                pinLookupSuccess = true
+                pinLookupError = ""
                 Utils.INDIAN_STATES.find {
                     it.second == result.stateCode || it.first.equals(result.state, ignoreCase = true)
                 }?.let { selectedStateInfo = it }
             } else {
                 pinLookupMessage = "City not found — enter manually"
-                pinLookupSuccess = false
+                pinLookupError = "Unable to fetch location"
             }
         } else {
             isPinLoading = false
-            pinLookupMessage = ""
-            pinLookupSuccess = false
+            pinLookupError = ""
         }
     }
 
     Scaffold(
+        modifier = Modifier.fillMaxSize(),
         containerColor = AppColors.screenBg,
         topBar = {
             TopAppBar(
@@ -133,13 +132,14 @@ fun SetupScreen(
                 .fillMaxSize()
                 .background(Colors.surface) // Setup screen requested in Section 1 to have White background
                 .padding(innerPadding)
+                .imePadding()
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(scrollState)
                     .imePadding()
-                    .padding(start = 24.dp, top = 24.dp, end = 24.dp, bottom = 80.dp),
+                    .padding(start = 16.dp, top = 24.dp, end = 16.dp, bottom = 100.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 // Header block
@@ -231,15 +231,6 @@ fun SetupScreen(
                         },
                         isError = pinError
                     )
-                    if (pinLookupMessage.isNotBlank()) {
-                        Text(
-                            text = pinLookupMessage,
-                            color = if (pinLookupSuccess) Color(0xFF2E7D32) else Color.Gray,
-                            fontSize = 11.sp,
-                            modifier = Modifier.padding(top = 4.dp)
-                        )
-                    }
-
                     // City
                     RetailTextField(
                         value = city,
@@ -247,6 +238,13 @@ fun SetupScreen(
                         label = "City *",
                         modifier = Modifier.weight(1f),
                         singleLine = true
+                    )
+                }
+                if (pinLookupError.isNotBlank()) {
+                    Text(
+                        text = pinLookupError,
+                        color = Color.Gray,
+                        fontSize = 11.sp
                     )
                 }
 

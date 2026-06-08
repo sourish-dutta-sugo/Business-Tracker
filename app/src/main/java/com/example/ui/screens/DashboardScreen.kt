@@ -36,6 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.ui.unit.sp
 import com.example.data.LedgerEntry
 import com.example.data.Utils
@@ -136,6 +137,7 @@ fun DashboardScreen(
             .fillMaxSize()
             .background(AppColors.screenBg)
             .verticalScroll(scrollState)
+            .imePadding()
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {

@@ -31,6 +31,9 @@ import androidx.compose.ui.unit.sp
 import com.example.data.*
 import com.example.ui.AppViewModel
 import com.example.ui.theme.Colors
+import com.example.utils.HsnEntry
+import com.example.utils.HsnLookup
+import kotlinx.coroutines.delay
 import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -57,6 +60,7 @@ fun ProductsScreen(
         )
     } else {
         Scaffold(
+            modifier = Modifier.fillMaxSize(),
             containerColor = AppColors.screenBg,
             topBar = {
                 TopAppBar(
@@ -80,86 +84,94 @@ fun ProductsScreen(
                 }
             }
         ) { innerPadding ->
-            Column(
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(AppColors.screenBg)
                     .padding(innerPadding)
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                    .imePadding()
             ) {
-                // Search field
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    placeholder = { Text("Search by product name or HSN code...") },
-                    leadingIcon = { Icon(imageVector = Icons.Default.Search, contentDescription = null, tint = AppColors.textSecondary) },
-                    modifier = Modifier.fillMaxWidth().testTag("product_search_bar"),
-                    shape = RoundedCornerShape(8.dp),
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = AppColors.inputText,
-                        unfocusedTextColor = AppColors.inputText,
-                        disabledTextColor = AppColors.inputText,
-                        focusedBorderColor = Colors.inputBorder,
-                        unfocusedBorderColor = Colors.inputBorder,
-                        disabledBorderColor = Colors.inputBorder,
-                        focusedContainerColor = AppColors.inputBg,
-                        unfocusedContainerColor = AppColors.inputBg,
-                        disabledContainerColor = AppColors.inputBg,
-                        focusedPlaceholderColor = AppColors.inputPlaceholder,
-                        unfocusedPlaceholderColor = AppColors.inputPlaceholder
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(start = 16.dp, end = 16.dp, bottom = 100.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder = { Text("Search by product name or HSN code...") },
+                        leadingIcon = { Icon(imageVector = Icons.Default.Search, contentDescription = null, tint = AppColors.textSecondary) },
+                        modifier = Modifier.fillMaxWidth().testTag("product_search_bar"),
+                        shape = RoundedCornerShape(8.dp),
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = AppColors.inputText,
+                            unfocusedTextColor = AppColors.inputText,
+                            disabledTextColor = AppColors.inputText,
+                            focusedBorderColor = Colors.inputBorder,
+                            unfocusedBorderColor = Colors.inputBorder,
+                            disabledBorderColor = Colors.inputBorder,
+                            focusedContainerColor = AppColors.inputBg,
+                            unfocusedContainerColor = AppColors.inputBg,
+                            disabledContainerColor = AppColors.inputBg,
+                            focusedPlaceholderColor = AppColors.inputPlaceholder,
+                            unfocusedPlaceholderColor = AppColors.inputPlaceholder
+                        )
                     )
-                )
 
-                if (filteredProducts.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("No products configured yet.", color = AppColors.textSecondary, fontSize = 14.sp)
-                    }
-                } else {
-                    LazyColumn(
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        items(filteredProducts) { item ->
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .border(0.5.dp, Color(0xFFE8E8E8), RoundedCornerShape(8.dp)),
-                                colors = CardDefaults.cardColors(containerColor = AppColors.cardBg)
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(14.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
+                    if (filteredProducts.isEmpty()) {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text("No products configured yet.", color = AppColors.textSecondary, fontSize = 14.sp)
+                        }
+                    } else {
+                        LazyColumn(
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .imePadding(),
+                            contentPadding = PaddingValues(start = 0.dp, end = 0.dp, bottom = 120.dp)
+                        ) {
+                            items(filteredProducts) { item ->
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .border(0.5.dp, Color(0xFFE8E8E8), RoundedCornerShape(8.dp)),
+                                    colors = CardDefaults.cardColors(containerColor = AppColors.cardBg)
                                 ) {
-                                    Column {
-                                        Text(
-                                            text = item.name,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 14.sp,
-                                            color = Color(0xFF1A1A1A)
-                                        )
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text(text = "HSN: ${item.hsnCode} | Unit: ${item.unit}", fontSize = 11.sp, color = AppColors.textSecondary)
-                                        Text(text = "GST Rate: ${item.gstRate}%", fontSize = 11.sp, color = AppColors.textSecondary, fontWeight = FontWeight.Bold)
-                                    }
+                                    Row(
+                                        modifier = Modifier.padding(14.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column {
+                                            Text(
+                                                text = item.name,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 14.sp,
+                                                color = Color(0xFF1A1A1A)
+                                            )
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(text = "HSN: ${item.hsnCode} | Unit: ${item.unit}", fontSize = 11.sp, color = AppColors.textSecondary)
+                                            Text(text = "GST Rate: ${item.gstRate}%", fontSize = 11.sp, color = AppColors.textSecondary, fontWeight = FontWeight.Bold)
+                                        }
 
-                                    Column(horizontalAlignment = Alignment.End) {
-                                        Text(
-                                            text = Utils.formatIndianCurrency(item.saleRate),
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 14.sp,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
-                                        Text(
-                                            text = "Sale Rate",
-                                            fontSize = 10.sp,
-                                            color = AppColors.textSecondary,
-                                            fontWeight = FontWeight.SemiBold
-                                        )
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text(text = "Cost: ${Utils.formatIndianCurrency(item.purchaseRate)}", fontSize = 10.sp, color = AppColors.textSecondary)
+                                        Column(horizontalAlignment = Alignment.End) {
+                                            Text(
+                                                text = Utils.formatIndianCurrency(item.saleRate),
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 14.sp,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                            Text(
+                                                text = "Sale Rate",
+                                                fontSize = 10.sp,
+                                                color = AppColors.textSecondary,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(text = "Cost: ${Utils.formatIndianCurrency(item.purchaseRate)}", fontSize = 10.sp, color = AppColors.textSecondary)
+                                        }
                                     }
                                 }
                             }
@@ -194,10 +206,22 @@ fun AddProductForm(
     var expiryDate by remember { mutableStateOf("") }
     var serialEnabled by remember { mutableStateOf(false) }
     var showError by remember { mutableStateOf(false) }
+    var hsnSuggestions by remember { mutableStateOf<List<HsnEntry>>(emptyList()) }
+    var wasHsnAutoFilled by remember { mutableStateOf(false) }
 
     val scrollState = rememberScrollState()
 
+    LaunchedEffect(name) {
+        if (name.length >= 3) {
+            delay(400)
+            hsnSuggestions = HsnLookup.search(name)
+        } else {
+            hsnSuggestions = emptyList()
+        }
+    }
+
     Scaffold(
+        modifier = Modifier.fillMaxSize(),
         containerColor = AppColors.screenBg,
         topBar = {
             TopAppBar(
@@ -211,19 +235,30 @@ fun AddProductForm(
             )
         }
     ) { innerPadding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(AppColors.screenBg)
+                .padding(innerPadding)
+                .imePadding()
+        ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
                 .verticalScroll(scrollState)
                 .imePadding()
-                .padding(innerPadding)
-                .padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 80.dp),
+                .padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 100.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             OutlinedTextField(
                 value = name,
-                onValueChange = { name = it },
+                onValueChange = {
+                    name = it
+                    if (wasHsnAutoFilled) {
+                        hsnCode = ""
+                        wasHsnAutoFilled = false
+                    }
+                },
                 label = { Text("Product / Item Name *") },
                 modifier = Modifier
                     .fillMaxWidth()
@@ -248,6 +283,12 @@ fun AddProductForm(
             ProductOptionalFields(
                 hsnCode = hsnCode,
                 onHsnChange = { hsnCode = it },
+                hsnSuggestions = hsnSuggestions,
+                onHsnSelected = {
+                    hsnCode = it
+                    wasHsnAutoFilled = true
+                    hsnSuggestions = emptyList()
+                },
                 batchEnabled = batchEnabled,
                 onBatchEnabledChange = { batchEnabled = it },
                 batchNumber = batchNumber,
@@ -480,6 +521,7 @@ fun AddProductForm(
                 Icon(imageVector = Icons.Default.Check, contentDescription = null, modifier = Modifier.padding(end = 4.dp))
                 Text("Save Product Raw Item", fontWeight = FontWeight.Bold, color = AppColors.textOnPrimary)
             }
+        }
         }
     }
 }
