@@ -18,8 +18,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val items: List<VoucherItem>,
         val charges: List<AdditionalCharge>,
         val party: Party?,
-        val profile: BusinessProfile,
-        val html: String
+        val profile: BusinessProfile
     )
 
     data class VoucherPrefillRequest(
@@ -53,8 +52,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     // Current setup status
     val isSetupCompleted = MutableStateFlow(false)
-    val financialYear = MutableStateFlow(YearStorageManager.getActiveFinancialYear(application))
-    val isStorageConfigured = MutableStateFlow(YearStorageManager.isStorageConfigured(application))
+    val financialYear = MutableStateFlow("2025-26")
     val voucherPrefillRequest = MutableStateFlow<VoucherPrefillRequest?>(null)
 
     init {
@@ -139,7 +137,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 isSetupCompleted.value = prof != null
                 prof?.fyLabel?.takeIf { it.isNotBlank() }?.let { savedFy ->
                     financialYear.value = savedFy
-                    YearStorageManager.setActiveFinancialYear(getApplication(), savedFy)
                 }
             }
         }
@@ -168,8 +165,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             repository.insertProfile(profile)
             isSetupCompleted.value = true
-            financialYear.value = profile.fyLabel
-            YearStorageManager.setActiveFinancialYear(getApplication(), profile.fyLabel)
             onSuccess()
         }
     }
@@ -177,8 +172,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun updateProfile(profile: BusinessProfile, onSuccess: () -> Unit) {
         viewModelScope.launch {
             repository.insertProfile(profile)
-            financialYear.value = profile.fyLabel
-            YearStorageManager.setActiveFinancialYear(getApplication(), profile.fyLabel)
             onSuccess()
         }
     }
@@ -259,14 +252,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val party = voucher.partyId?.let { repository.getPartyById(it) }
         val charges = InvoiceGenerator.parseAdditionalCharges(voucher.additionalChargesJson)
         InvoiceGenerator.primeVoucherRenderExtras(getApplication(), voucherId)
-        val html = InvoiceGenerator.buildInvoiceHtml(voucher, items, profile, party, charges)
         return InvoicePreviewData(
             voucher = voucher,
             items = items,
             charges = charges,
             party = party,
-            profile = profile,
-            html = html
+            profile = profile
         )
     }
 
@@ -329,80 +320,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         } catch (e: Exception) {
             e.printStackTrace()
             false
-        }
-    }
-
-    fun grantStorageAccess(): Boolean {
-        val saved = YearStorageManager.grantStorageAccess(getApplication())
-        isStorageConfigured.value = YearStorageManager.isStorageConfigured(getApplication())
-        if (saved) {
-            viewModelScope.launch {
-                YearStorageManager.exportActiveDatabaseToFinancialYearFolder(
-                    getApplication(),
-                    financialYear.value
-                )
-            }
-        }
-        return saved
-    }
-
-    fun switchFinancialYear(
-        targetFinancialYear: String,
-        onComplete: (FinancialYearSwitchResult) -> Unit,
-        onError: (String) -> Unit
-    ) {
-        viewModelScope.launch {
-            try {
-                val result = YearStorageManager.switchFinancialYear(
-                    context = getApplication(),
-                    targetFinancialYear = targetFinancialYear,
-                    currentProfile = repository.getProfileSync()
-                )
-                financialYear.value = result.financialYear
-                onComplete(result)
-            } catch (error: Exception) {
-                onError(error.localizedMessage ?: "Unable to switch financial year.")
-            }
-        }
-    }
-
-    fun exportActiveFinancialYearCsv(onComplete: (String?) -> Unit) {
-        viewModelScope.launch {
-            val header = "VoucherNo,Date,Type,Party,PaymentMode,TaxableAmount,CGST,SGST,IGST,RoundOff,NetAmount"
-            val sdf = java.text.SimpleDateFormat("dd-MM-yyyy HH:mm", java.util.Locale.US)
-            val body = vouchers.value.joinToString("\n") { voucher ->
-                listOf(
-                    voucher.voucherNo,
-                    sdf.format(java.util.Date(voucher.createdAt)),
-                    voucher.type,
-                    voucher.partyId ?: "Cash",
-                    voucher.paymentMode,
-                    voucher.taxableAmount,
-                    voucher.cgst,
-                    voucher.sgst,
-                    voucher.igst,
-                    voucher.roundOff,
-                    voucher.netAmount
-                ).joinToString(",")
-            }
-            val path = YearStorageManager.exportCsvToFinancialYearFolder(
-                context = getApplication(),
-                financialYear = financialYear.value,
-                csvContent = if (body.isBlank()) header else "$header\n$body"
-            )
-            onComplete(path)
-        }
-    }
-
-    fun restoreActiveFinancialYearFromFolder(
-        onComplete: (Boolean) -> Unit
-    ) {
-        viewModelScope.launch {
-            val restored = YearStorageManager.restoreActiveDatabaseFromFinancialYearFolder(
-                context = getApplication(),
-                financialYear = financialYear.value
-            )
-            onComplete(restored)
         }
     }
 

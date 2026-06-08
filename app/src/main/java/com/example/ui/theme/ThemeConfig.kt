@@ -82,25 +82,25 @@ data class AppTheme(
             statusBarDarkIcons = true
         )
 
-        val DARK = AppTheme(
-            name = "DARK",
-            backgroundPrimary = Color(0xFF121212),
-            backgroundSecondary = Color(0xFF1E1E1E),
-            backgroundTertiary = Color(0xFF2C2C2C),
-            accentPrimary = Color(0xFF90CAF9),
-            accentLight = Color(0xFF1E2A3A),
-            textPrimary = Color(0xFFEEEEEE),
-            textSecondary = Color(0xFFBBBBBB),
-            textTertiary = Color(0xFF888888),
-            statusBarColor = Color(0xFF121212),
-            statusBarDarkIcons = false
+        val TEAL = AppTheme(
+            name = "TEAL",
+            backgroundPrimary = Color(0xFFF1FBF8),
+            backgroundSecondary = Color(0xFFFFFFFF),
+            backgroundTertiary = Color(0xFFFFFFFF),
+            accentPrimary = Color(0xFF0F9D8A),
+            accentLight = Color(0xFFE0F4EF),
+            textPrimary = Color(0xFF0D0D0D),
+            textSecondary = Color(0xFF444444),
+            textTertiary = Color(0xFF8A8A8A),
+            statusBarColor = Color(0xFFF1FBF8),
+            statusBarDarkIcons = true
         )
 
         fun fromName(name: String?): AppTheme = when (name?.uppercase()) {
             BLUE.name -> BLUE
             GREEN.name -> GREEN
             PURPLE.name -> PURPLE
-            DARK.name -> DARK
+            TEAL.name, "DARK" -> TEAL
             else -> BEACH
         }
     }

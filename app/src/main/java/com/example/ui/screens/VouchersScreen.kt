@@ -7,6 +7,7 @@ import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
 
 import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -14,6 +15,9 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -35,6 +39,7 @@ import androidx.compose.material.icons.outlined.Upload
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -90,6 +95,206 @@ private data class ParsedBillItemDraft(
     val rate: String,
     val included: Boolean = true
 )
+
+@Composable
+private fun transportFieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedTextColor = Color(0xFF0D0D0D),
+    unfocusedTextColor = Color(0xFF0D0D0D),
+    focusedContainerColor = Color(0xFFFFFFFF),
+    unfocusedContainerColor = Color(0xFFFFFFFF),
+    focusedBorderColor = Color(0xFF1A73E8),
+    unfocusedBorderColor = Color(0xFFE0E4EA)
+)
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun TransportDetailField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    placeholder: String,
+    imeAction: ImeAction,
+    keyboardOptions: KeyboardOptions = KeyboardOptions(
+        keyboardType = KeyboardType.Text,
+        imeAction = imeAction
+    )
+) {
+    val bringIntoViewRequester = remember { BringIntoViewRequester() }
+    val coroutineScope = rememberCoroutineScope()
+
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label, color = Color(0xFF444444)) },
+        placeholder = { Text(placeholder) },
+        modifier = Modifier
+            .fillMaxWidth()
+            .bringIntoViewRequester(bringIntoViewRequester)
+            .onFocusChanged { focusState ->
+                if (focusState.isFocused) {
+                    coroutineScope.launch {
+                        delay(300)
+                        bringIntoViewRequester.bringIntoView()
+                    }
+                }
+            },
+        singleLine = true,
+        keyboardOptions = keyboardOptions,
+        colors = transportFieldColors()
+    )
+}
+
+@Composable
+private fun TransportDetailsSection(
+    isTablet: Boolean,
+    amount: Double,
+    transportName: String,
+    onTransportNameChange: (String) -> Unit,
+    transportVehicle: String,
+    onTransportVehicleChange: (String) -> Unit,
+    transportLrNo: String,
+    onTransportLrNoChange: (String) -> Unit,
+    transportGstin: String,
+    onTransportGstinChange: (String) -> Unit,
+    transportDestination: String,
+    onTransportDestinationChange: (String) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        if (isTablet) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Box(modifier = Modifier.weight(1f)) {
+                    TransportDetailField(
+                        value = transportName,
+                        onValueChange = onTransportNameChange,
+                        label = "Transporter Name",
+                        placeholder = "Name of transport agency",
+                        imeAction = ImeAction.Next
+                    )
+                }
+                Box(modifier = Modifier.weight(1f)) {
+                    TransportDetailField(
+                        value = transportVehicle,
+                        onValueChange = onTransportVehicleChange,
+                        label = "Vehicle No.",
+                        placeholder = "e.g. WB-01-AB-1234",
+                        imeAction = ImeAction.Next,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Text,
+                            capitalization = KeyboardCapitalization.Characters,
+                            imeAction = ImeAction.Next
+                        )
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Box(modifier = Modifier.weight(1f)) {
+                    TransportDetailField(
+                        value = transportLrNo,
+                        onValueChange = onTransportLrNoChange,
+                        label = "LR/GR No.",
+                        placeholder = "Lorry receipt number",
+                        imeAction = ImeAction.Next
+                    )
+                }
+                Box(modifier = Modifier.weight(1f)) {
+                    TransportDetailField(
+                        value = transportGstin,
+                        onValueChange = onTransportGstinChange,
+                        label = "Transporter GSTIN",
+                        placeholder = "Optional - 15 digit GSTIN",
+                        imeAction = ImeAction.Next,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Text,
+                            capitalization = KeyboardCapitalization.Characters,
+                            imeAction = ImeAction.Next
+                        )
+                    )
+                }
+            }
+
+            TransportDetailField(
+                value = transportDestination,
+                onValueChange = onTransportDestinationChange,
+                label = "Destination",
+                placeholder = "Delivery location",
+                imeAction = ImeAction.Done,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Text,
+                    imeAction = ImeAction.Done
+                )
+            )
+        } else {
+            TransportDetailField(
+                value = transportName,
+                onValueChange = onTransportNameChange,
+                label = "Transporter Name",
+                placeholder = "Name of transport agency",
+                imeAction = ImeAction.Next
+            )
+            if (amount > 0.0 && transportName.isBlank()) {
+                Text(
+                    "Transporter name recommended for records",
+                    color = Color.Gray,
+                    fontSize = 11.sp
+                )
+            }
+            TransportDetailField(
+                value = transportVehicle,
+                onValueChange = onTransportVehicleChange,
+                label = "Vehicle No.",
+                placeholder = "e.g. WB-01-AB-1234",
+                imeAction = ImeAction.Next,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Text,
+                    capitalization = KeyboardCapitalization.Characters,
+                    imeAction = ImeAction.Next
+                )
+            )
+            TransportDetailField(
+                value = transportLrNo,
+                onValueChange = onTransportLrNoChange,
+                label = "LR/GR No.",
+                placeholder = "Lorry receipt number",
+                imeAction = ImeAction.Next
+            )
+            TransportDetailField(
+                value = transportGstin,
+                onValueChange = onTransportGstinChange,
+                label = "Transporter GSTIN",
+                placeholder = "Optional - 15 digit GSTIN",
+                imeAction = ImeAction.Next,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Text,
+                    capitalization = KeyboardCapitalization.Characters,
+                    imeAction = ImeAction.Next
+                )
+            )
+            TransportDetailField(
+                value = transportDestination,
+                onValueChange = onTransportDestinationChange,
+                label = "Destination",
+                placeholder = "Delivery location",
+                imeAction = ImeAction.Done,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Text,
+                    imeAction = ImeAction.Done
+                )
+            )
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -495,10 +700,8 @@ fun NewVoucherScreen(
 
     val coroutineScope = rememberCoroutineScope()
     val isEditMode = !voucherId.isNullOrBlank()
-    val configuration = LocalConfiguration.current
-    val isTablet = configuration.screenWidthDp >= 840
-    val isLandscapeMobile = configuration.screenWidthDp >= 600 && !isTablet
-    val useStackedChargeLayout = !isTablet || isLandscapeMobile
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp
+    val isTablet = screenWidthDp >= 600
     
     var step by remember { mutableStateOf(voucherId?.let { 2 } ?: 1) } // 1: Type selection, 2: Form & Line items
     
@@ -1044,7 +1247,7 @@ fun NewVoucherScreen(
         }
     } else {
         // Step 2: Main Entry layout
-        val scrollState = rememberScrollState()
+        val listState = rememberLazyListState()
 
         Scaffold(
             containerColor = AppColors.screenBg,
@@ -1080,13 +1283,22 @@ fun NewVoucherScreen(
                 Column(
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    Column(
+                    LazyColumn(
                         modifier = Modifier
                             .weight(1f)
-                            .fillMaxWidth()
-                            .verticalScroll(scrollState)
-                            .imePadding()
-                            .padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 120.dp),
+                            .fillMaxWidth(),
+                        state = listState,
+                        contentPadding = PaddingValues(
+                            top = 8.dp,
+                            start = 16.dp,
+                            end = 16.dp,
+                            bottom = 160.dp
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                    item(key = "voucher_form_content") {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1557,6 +1769,7 @@ fun NewVoucherScreen(
                         }
 
                         lineItems.forEachIndexed { index, item ->
+                            key(item.id) {
                             val originalItem = originalReturnItems[item.id]
                             Card(
                                 modifier = Modifier
@@ -1663,6 +1876,7 @@ fun NewVoucherScreen(
                                     }
                                 }
                             }
+                            }
                         }
                     } else {
                         // Non-invoice: direct Receipt/Payment amount dialog
@@ -1709,6 +1923,7 @@ fun NewVoucherScreen(
                             }
 
                             pendingInvoices.forEach { invoice ->
+                                key(invoice.id) {
                                 Card(
                                     modifier = Modifier.fillMaxWidth(),
                                     colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFFFF)),
@@ -1738,6 +1953,7 @@ fun NewVoucherScreen(
                                             Text("Remaining: ${Utils.formatIndianCurrency(invoiceOutstanding)}", fontSize = 12.sp, color = Color(0xFFC62828), fontWeight = FontWeight.Bold)
                                         }
                                     }
+                                }
                                 }
                             }
                         }
@@ -2034,6 +2250,7 @@ fun NewVoucherScreen(
                             }
 
                             additionalCharges.forEachIndexed { index, charge ->
+                                key("${charge.label}-${charge.amount}-$index") {
                                 val isOtherCharge = charge.label.isBlank() || chargeTypes.none { it == charge.label }
                                 val isTransportCharge = isTransportChargeType(charge.label)
                                 var chargeTypeExpanded by remember(index, charge.label) { mutableStateOf(false) }
@@ -2055,7 +2272,7 @@ fun NewVoucherScreen(
                                         .padding(12.dp),
                                     verticalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    if (useStackedChargeLayout) {
+                                    if (!isTablet) {
                                         Column(
                                             modifier = Modifier.fillMaxWidth(),
                                             verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -2091,9 +2308,7 @@ fun NewVoucherScreen(
                                                             text = { Text(type, color = Color(0xFF0D0D0D)) },
                                                             onClick = {
                                                                 additionalCharges[index] = charge.copy(label = if (type == "Other") "" else type)
-                                                                if (isTransportChargeType(type)) {
-                                                                    transportExpanded = transportExpanded || hasTransportDetails
-                                                                }
+                                                                transportExpanded = isTransportChargeType(type)
                                                                 chargeTypeExpanded = false
                                                             },
                                                             colors = MenuDefaults.itemColors(textColor = Color(0xFF0D0D0D))
@@ -2184,9 +2399,7 @@ fun NewVoucherScreen(
                                                         text = { Text(type, color = Color(0xFF0D0D0D)) },
                                                         onClick = {
                                                             additionalCharges[index] = charge.copy(label = if (type == "Other") "" else type)
-                                                            if (isTransportChargeType(type)) {
-                                                                transportExpanded = transportExpanded || hasTransportDetails
-                                                            }
+                                                            transportExpanded = isTransportChargeType(type)
                                                             chargeTypeExpanded = false
                                                         },
                                                         colors = MenuDefaults.itemColors(textColor = Color(0xFF0D0D0D))
@@ -2218,7 +2431,10 @@ fun NewVoucherScreen(
                                                 label = { Text("Amount", color = Color(0xFF444444)) },
                                                 modifier = Modifier.weight(0.9f),
                                                 prefix = { Text("Rs", color = Color(0xFF0D0D0D)) },
-                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                                keyboardOptions = KeyboardOptions(
+                                                    keyboardType = KeyboardType.Decimal,
+                                                    imeAction = ImeAction.Next
+                                                ),
                                                 colors = OutlinedTextFieldDefaults.colors(
                                                     focusedContainerColor = Color(0xFFFFFFFF),
                                                     unfocusedContainerColor = Color(0xFFFFFFFF),
@@ -2251,121 +2467,23 @@ fun NewVoucherScreen(
                                         }
 
                                         if (transportExpanded) {
-                                            Column(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(top = 8.dp)
-                                                    .border(1.dp, Color(0xFFE0E0E0), RoundedCornerShape(8.dp))
-                                                    .padding(12.dp),
-                                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                                            ) {
-                                                OutlinedTextField(
-                                                    value = transportName,
-                                                    onValueChange = { transportName = it },
-                                                    label = { Text("Transporter Name", color = Color(0xFF444444)) },
-                                                    placeholder = { Text("Transport agency or person name") },
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .padding(bottom = 6.dp),
-                                                    keyboardOptions = KeyboardOptions(
-                                                        keyboardType = KeyboardType.Text,
-                                                        imeAction = ImeAction.Next
-                                                    ),
-                                                    colors = OutlinedTextFieldDefaults.colors(
-                                                        focusedContainerColor = Color(0xFFFFFFFF),
-                                                        unfocusedContainerColor = Color(0xFFFFFFFF),
-                                                        focusedTextColor = Color(0xFF0D0D0D),
-                                                        unfocusedTextColor = Color(0xFF0D0D0D)
-                                                    )
-                                                )
-                                                if (charge.amount > 0.0 && transportName.isBlank()) {
-                                                    Text(
-                                                        "Transporter name recommended for records",
-                                                        color = Color.Gray,
-                                                        fontSize = 11.sp
-                                                    )
-                                                }
-                                                OutlinedTextField(
-                                                    value = transportVehicle,
-                                                    onValueChange = { transportVehicle = it.uppercase() },
-                                                    label = { Text("Vehicle No. (optional)", color = Color(0xFF444444)) },
-                                                    placeholder = { Text("e.g. WB-01-AB-1234") },
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .padding(bottom = 6.dp),
-                                                    keyboardOptions = KeyboardOptions(
-                                                        keyboardType = KeyboardType.Text,
-                                                        capitalization = KeyboardCapitalization.Characters,
-                                                        imeAction = ImeAction.Next
-                                                    ),
-                                                    colors = OutlinedTextFieldDefaults.colors(
-                                                        focusedContainerColor = Color(0xFFFFFFFF),
-                                                        unfocusedContainerColor = Color(0xFFFFFFFF),
-                                                        focusedTextColor = Color(0xFF0D0D0D),
-                                                        unfocusedTextColor = Color(0xFF0D0D0D)
-                                                    )
-                                                )
-                                                OutlinedTextField(
-                                                    value = transportLrNo,
-                                                    onValueChange = { transportLrNo = it },
-                                                    label = { Text("LR/GR No. (optional)", color = Color(0xFF444444)) },
-                                                    placeholder = { Text("Lorry Receipt or GR number") },
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .padding(bottom = 6.dp),
-                                                    keyboardOptions = KeyboardOptions(
-                                                        keyboardType = KeyboardType.Text,
-                                                        imeAction = ImeAction.Next
-                                                    ),
-                                                    colors = OutlinedTextFieldDefaults.colors(
-                                                        focusedContainerColor = Color(0xFFFFFFFF),
-                                                        unfocusedContainerColor = Color(0xFFFFFFFF),
-                                                        focusedTextColor = Color(0xFF0D0D0D),
-                                                        unfocusedTextColor = Color(0xFF0D0D0D)
-                                                    )
-                                                )
-                                                OutlinedTextField(
-                                                    value = transportGstin,
-                                                    onValueChange = { transportGstin = it.uppercase() },
-                                                    label = { Text("Transporter GSTIN (optional)", color = Color(0xFF444444)) },
-                                                    placeholder = { Text("15-digit GSTIN if registered") },
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .padding(bottom = 6.dp),
-                                                    keyboardOptions = KeyboardOptions(
-                                                        keyboardType = KeyboardType.Text,
-                                                        capitalization = KeyboardCapitalization.Characters,
-                                                        imeAction = ImeAction.Next
-                                                    ),
-                                                    colors = OutlinedTextFieldDefaults.colors(
-                                                        focusedContainerColor = Color(0xFFFFFFFF),
-                                                        unfocusedContainerColor = Color(0xFFFFFFFF),
-                                                        focusedTextColor = Color(0xFF0D0D0D),
-                                                        unfocusedTextColor = Color(0xFF0D0D0D)
-                                                    )
-                                                )
-                                                OutlinedTextField(
-                                                    value = transportDestination,
-                                                    onValueChange = { transportDestination = it },
-                                                    label = { Text("Destination (optional)", color = Color(0xFF444444)) },
-                                                    placeholder = { Text("Delivery destination") },
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .padding(bottom = 6.dp),
-                                                    keyboardOptions = KeyboardOptions(
-                                                        keyboardType = KeyboardType.Text,
-                                                        imeAction = ImeAction.Next
-                                                    ),
-                                                    colors = OutlinedTextFieldDefaults.colors(
-                                                        focusedContainerColor = Color(0xFFFFFFFF),
-                                                        unfocusedContainerColor = Color(0xFFFFFFFF),
-                                                        focusedTextColor = Color(0xFF0D0D0D),
-                                                        unfocusedTextColor = Color(0xFF0D0D0D)
-                                                    )
-                                                )
-                                            }
+                                            TransportDetailsSection(
+                                                isTablet = isTablet,
+                                                amount = charge.amount,
+                                                transportName = transportName,
+                                                onTransportNameChange = { transportName = it },
+                                                transportVehicle = transportVehicle,
+                                                onTransportVehicleChange = { transportVehicle = it.uppercase() },
+                                                transportLrNo = transportLrNo,
+                                                onTransportLrNoChange = { transportLrNo = it },
+                                                transportGstin = transportGstin,
+                                                onTransportGstinChange = { transportGstin = it.uppercase() },
+                                                transportDestination = transportDestination,
+                                                onTransportDestinationChange = { transportDestination = it }
+                                            )
                                         }
                                     }
+                                }
                                 }
                                 }
                             }
@@ -2463,6 +2581,8 @@ fun NewVoucherScreen(
                         }
                     }
                 }
+                    }
+                    }
             }
 
             if (showStickyBar) {
@@ -2516,6 +2636,7 @@ fun NewVoucherScreen(
                     .fillMaxSize()
                     .background(AppColors.screenBg)
                     .padding(innerPadding)
+                    .imePadding()
             ) {
                 FormContent(showStickyBar = false)
             }
@@ -2723,38 +2844,30 @@ fun NewVoucherScreen(
         contract = androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/pdf")
     ) { uri ->
         if (uri != null) {
-            try {
-                val dateStr = java.text.SimpleDateFormat("dd-MMM-yyyy hh:mm a", java.util.Locale.getDefault()).format(java.util.Date(voucherDate))
-                val itemsList = lineItems.toList()
-                val pdfFile = com.example.data.PdfUtils.generatePdfInvoice(
-                    context = context,
-                    profile = profile,
-                    voucherNo = voucherNo,
-                    dateFormatted = dateStr,
-                    partyName = selectedParty?.name ?: "Cash Customer",
-                    paymentMode = paymentMode,
-                    lineItems = itemsList,
-                    additionalCharges = additionalCharges.toList(),
-                    taxable = taxableAmount.value,
-                    cgst = cgst.value,
-                    sgst = sgst.value,
-                    igst = igst.value,
-                    roundOff = roundOff.value,
-                    net = netAmount.value
-                )
-                if (pdfFile != null) {
-                    context.contentResolver.openOutputStream(uri)?.use { output ->
-                        pdfFile.inputStream().use { input ->
-                            input.copyTo(output)
+            val savedVoucherId = printedVoucherId
+            if (savedVoucherId.isNullOrBlank()) {
+                android.widget.Toast.makeText(context, "Saved invoice not found", android.widget.Toast.LENGTH_SHORT).show()
+                onNavigateBack()
+            } else {
+                InvoiceGenerator.generatePdfFromVoucherId(context, savedVoucherId) { pdfFile, _ ->
+                    try {
+                        if (pdfFile != null) {
+                            context.contentResolver.openOutputStream(uri)?.use { output ->
+                                pdfFile.inputStream().use { input ->
+                                    input.copyTo(output)
+                                }
+                            }
+                            android.widget.Toast.makeText(context, "PDF saved successfully", android.widget.Toast.LENGTH_SHORT).show()
+                        } else {
+                            android.widget.Toast.makeText(context, "Failed to save PDF", android.widget.Toast.LENGTH_SHORT).show()
                         }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                        android.widget.Toast.makeText(context, "Failed to save PDF", android.widget.Toast.LENGTH_SHORT).show()
                     }
-                    android.widget.Toast.makeText(context, "PDF saved successfully", android.widget.Toast.LENGTH_SHORT).show()
+                    onNavigateBack()
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
-                android.widget.Toast.makeText(context, "Failed to save PDF", android.widget.Toast.LENGTH_SHORT).show()
             }
-            onNavigateBack()
         } else {
             onNavigateBack()
         }
@@ -3022,37 +3135,24 @@ fun NewVoucherScreen(
                         onClick = {
                             showPrintReceiptDialog = false
                             try {
-                                val dateStr = sdf.format(Date(voucherDate))
-                                val itemsList = lineItems.toList()
-                                val pdfFile = PdfUtils.generatePdfInvoice(
-                                    context = context,
-                                    profile = profile,
-                                    voucherNo = voucherNo,
-                                    dateFormatted = dateStr,
-                                    partyName = selectedParty?.name ?: "Cash Customer",
-                                    paymentMode = paymentMode,
-                                    lineItems = itemsList,
-                                    additionalCharges = additionalCharges.toList(),
-                                    taxable = taxableAmount.value,
-                                    cgst = cgst.value,
-                                    sgst = sgst.value,
-                                    igst = igst.value,
-                                    roundOff = roundOff.value,
-                                    net = netAmount.value
-                                )
-                                if (pdfFile != null) {
-                                    val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.provider", pdfFile)
-                                    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                                        type = "application/pdf"
-                                        putExtra(android.content.Intent.EXTRA_STREAM, uri)
-                                        addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                val savedVoucherId = printedVoucherId
+                                if (savedVoucherId.isNullOrBlank()) {
+                                    android.widget.Toast.makeText(context, "Saved invoice not found", android.widget.Toast.LENGTH_SHORT).show()
+                                } else {
+                                    InvoiceGenerator.generatePdfFromVoucherId(context, savedVoucherId) { pdfFile, _ ->
+                                        if (pdfFile != null) {
+                                            com.example.services.shareInvoicePdfToWhatsApp(context, pdfFile)
+                                        } else {
+                                            android.widget.Toast.makeText(context, "Failed to generate PDF", android.widget.Toast.LENGTH_SHORT).show()
+                                        }
+                                        onNavigateBack()
                                     }
-                                    context.startActivity(android.content.Intent.createChooser(intent, "Share Invoice PDF"))
                                 }
                             } catch (e: Exception) {
                                 e.printStackTrace()
+                                android.widget.Toast.makeText(context, "Failed to share PDF", android.widget.Toast.LENGTH_SHORT).show()
+                                onNavigateBack()
                             }
-                            onNavigateBack()
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25D366))
                     ) {
@@ -3988,7 +4088,9 @@ fun StickyBottomBar(
         tonalElevation = 8.dp,
         shadowElevation = 8.dp,
         color = Color.White,
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
     ) {
         Column(
             modifier = Modifier

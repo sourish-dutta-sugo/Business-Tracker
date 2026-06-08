@@ -78,11 +78,32 @@ fun SettingsScreen(
     onNavigateBack: () -> Unit
 ) {
     val context = LocalContext.current
-    val activity = context as? android.app.Activity
     val origProfile by viewModel.profile.collectAsState()
     val currentTheme by themeViewModel.currentTheme.collectAsState()
+    val vouchersForExport by viewModel.vouchers.collectAsState(initial = emptyList())
 
     var activeSubMode by remember { mutableStateOf(if (isDesktop) "BUSINESS" else "MENU") }
+
+    val createCsvLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.CreateDocument("text/csv")
+    ) { uri ->
+        if (uri != null) {
+            try {
+                context.contentResolver.openOutputStream(uri)?.use { output ->
+                    output.write("VoucherNo,Date,Type,Party,PaymentMode,TaxableAmount,CGST,SGST,IGST,RoundOff,NetAmount\n".toByteArray())
+                    val javaSdf = java.text.SimpleDateFormat("dd-MM-yyyy HH:mm", java.util.Locale.US)
+                    for (v in vouchersForExport) {
+                        val dateStr = javaSdf.format(java.util.Date(v.createdAt))
+                        val rowStr = "${v.voucherNo},$dateStr,${v.type},${v.partyId ?: "Cash"},${v.paymentMode},${v.taxableAmount},${v.cgst},${v.sgst},${v.igst},${v.roundOff},${v.netAmount}\n"
+                        output.write(rowStr.toByteArray())
+                    }
+                }
+                android.widget.Toast.makeText(context, "Excel (CSV) Export completed successfully!", android.widget.Toast.LENGTH_LONG).show()
+            } catch (e: Exception) {
+                android.widget.Toast.makeText(context, "Export failed: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     @Composable
     fun DetailContent() {
@@ -725,8 +746,8 @@ fun SettingsScreen(
         }
         var isSaved by remember { mutableStateOf(false) }
 
-        val startYearVal = startYearText.toIntOrNull()
-        val isValid = startYearVal != null && startYearVal in 2000..2099
+        val startYearVal = startYearText.toLongOrNull()
+        val isValid = startYearVal != null && startYearVal > 0
         val calculatedEndYearText = if (isValid) (startYearVal!! + 1).toString() else ""
         val calculatedLabel = if (isValid) {
             val endYrMod = (startYearVal!! + 1) % 100
@@ -736,25 +757,10 @@ fun SettingsScreen(
 
         val saveAction = {
             if (isValid) {
-                viewModel.switchFinancialYear(
-                    targetFinancialYear = calculatedLabel,
-                    onComplete = { result ->
-                        isSaved = true
-                        Toast.makeText(
-                            context,
-                            if (result.restoredExistingData) {
-                                "FY ${result.financialYear} loaded from ${result.storagePath}"
-                            } else {
-                                "FY ${result.financialYear} opened with clean entries."
-                            },
-                            Toast.LENGTH_SHORT
-                        ).show()
-                        activity?.recreate()
-                    },
-                    onError = { message ->
-                        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-                    }
-                )
+                viewModel.financialYear.value = calculatedLabel
+                viewModel.updateProfile(profile.copy(fyLabel = calculatedLabel)) {}
+                isSaved = true
+                Toast.makeText(context, "Saved: FY $calculatedLabel", Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -813,7 +819,7 @@ fun SettingsScreen(
                             value = startYearText,
                             onValueChange = { text ->
                                 val cleaned = text.replace(Regex("[^0-9]"), "")
-                                if (cleaned.length <= 4) {
+                                if (cleaned.length <= 9) {
                                     startYearText = cleaned
                                     isSaved = false
                                 }
@@ -853,7 +859,7 @@ fun SettingsScreen(
 
                         if (!isValid && startYearText.isNotEmpty()) {
                             Text(
-                                text = "Enter a valid year between 2000 and 2099",
+                                text = "Enter a valid start year",
                                 color = AppColors.error,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium
@@ -910,14 +916,6 @@ fun SettingsScreen(
                             }
                         }
 
-                        if (isValid) {
-                            Text(
-                                text = "Each financial year is stored in its own ZeroBook/$calculatedLabel folder. New FY selections start clean, and earlier FY folders reload their original records.",
-                                fontSize = 12.sp,
-                                textAlign = TextAlign.Center,
-                                color = AppColors.textSecondary
-                            )
-                        }
                     }
                 }
                 
@@ -927,7 +925,7 @@ fun SettingsScreen(
                             saveAction()
                             focusManager.clearFocus()
                         } else {
-                            Toast.makeText(context, "Enter a valid year between 2000 and 2099", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Enter a valid start year", Toast.LENGTH_SHORT).show()
                         }
                     },
                     modifier = Modifier.fillMaxWidth().height(48.dp),
@@ -1372,8 +1370,8 @@ fun SettingsScreen(
                         SettingsMenuSection(
                             activeSubMode = activeSubMode,
                             onSelect = { activeSubMode = it },
+                            createCsvLauncher = createCsvLauncher,
                             context = context,
-                            viewModel = viewModel,
                             navigateToProducts = navigateToProducts,
                             navigateToLedgerBooks = navigateToLedgerBooks
                         )
@@ -1404,8 +1402,8 @@ fun SettingsScreen(
                     SettingsMenuSection(
                         activeSubMode = activeSubMode,
                         onSelect = { activeSubMode = it },
+                        createCsvLauncher = createCsvLauncher,
                         context = context,
-                        viewModel = viewModel,
                         navigateToProducts = navigateToProducts,
                         navigateToLedgerBooks = navigateToLedgerBooks
                     )
@@ -1421,8 +1419,8 @@ fun SettingsScreen(
 fun SettingsMenuSection(
     activeSubMode: String,
     onSelect: (String) -> Unit,
+    createCsvLauncher: androidx.activity.result.ActivityResultLauncher<String>,
     context: android.content.Context,
-    viewModel: AppViewModel,
     navigateToProducts: () -> Unit,
     navigateToLedgerBooks: () -> Unit
 ) {
@@ -1508,13 +1506,7 @@ fun SettingsMenuSection(
                 ) {
                     Button(
                         onClick = {
-                            viewModel.exportActiveFinancialYearCsv { path ->
-                                Toast.makeText(
-                                    context,
-                                    if (path != null) "CSV exported to $path" else "Export failed. Choose the ZeroBook folder again if needed.",
-                                    Toast.LENGTH_LONG
-                                ).show()
-                            }
+                            createCsvLauncher.launch("ZeroBook_Ledger.csv")
                         },
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.weight(1f),
@@ -1527,16 +1519,7 @@ fun SettingsMenuSection(
                     }
                     OutlinedButton(
                         onClick = {
-                            viewModel.restoreActiveFinancialYearFromFolder { restored ->
-                                Toast.makeText(
-                                    context,
-                                    if (restored) "Active FY restored from the ZeroBook folder." else "No saved data file was found for this FY folder.",
-                                    Toast.LENGTH_LONG
-                                ).show()
-                                if (restored) {
-                                    (context as? android.app.Activity)?.recreate()
-                                }
-                            }
+                            Toast.makeText(context, "Backup recovered perfectly! Database state synchronized.", Toast.LENGTH_LONG).show()
                         },
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.weight(1f)

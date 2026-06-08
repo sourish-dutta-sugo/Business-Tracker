@@ -92,6 +92,8 @@ private val HSN_KEYWORD_MAP = mapOf(
     "meat" to "0201",
     "egg" to "0407",
     "pizza box" to "4819",
+    "paper cup" to "4823",
+    "plastic container" to "3923",
     "carry bag" to "3923",
     "glass" to "7013",
     "ceramic" to "6911",
@@ -110,6 +112,39 @@ fun searchHsn(keyword: String): List<HsnResult> {
         .filter { (key, _) -> key.contains(q) || q.contains(key) }
         .take(5)
         .map { (key, code) -> HsnResult(hsnCode = code, description = key.replaceFirstChar { it.uppercase() }) }
+}
+
+fun suggestHsn(keyword: String, products: List<Product>): HsnResult? {
+    val query = keyword.trim()
+    if (query.length < 2) return null
+
+    val normalizedQuery = query.lowercase()
+    val localProductMatch = products
+        .asSequence()
+        .filter { it.hsnCode.isNotBlank() }
+        .map { product ->
+            val normalizedName = product.name.trim().lowercase()
+            val score = when {
+                normalizedName == normalizedQuery -> 0
+                normalizedName.startsWith(normalizedQuery) -> 1
+                normalizedQuery in normalizedName -> 2
+                else -> 3
+            }
+            score to product
+        }
+        .filter { it.first < 3 }
+        .sortedBy { it.first }
+        .firstOrNull()
+        ?.second
+
+    if (localProductMatch != null) {
+        return HsnResult(
+            hsnCode = localProductMatch.hsnCode,
+            description = localProductMatch.name
+        )
+    }
+
+    return searchHsn(query).firstOrNull()
 }
 
 fun filterDecimalInput(input: String): String {

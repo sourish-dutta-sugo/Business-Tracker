@@ -28,6 +28,7 @@ import com.example.data.VoucherItem
 import com.example.data.filterDecimalInput
 import com.example.data.filterHsnInput
 import com.example.data.searchHsn
+import com.example.data.suggestHsn
 import com.example.ui.theme.AppColors
 import com.example.ui.theme.TextDark
 import com.example.ui.theme.TextGray
@@ -87,6 +88,7 @@ fun VoucherItemEntrySheet(
     var nameError by remember { mutableStateOf(false) }
     var qtyError by remember { mutableStateOf(false) }
     var rateError by remember { mutableStateOf(false) }
+    var suggestedHsn by remember { mutableStateOf<com.example.data.HsnResult?>(null) }
 
     val filteredProducts = remember(productName, products) {
         if (productName.isBlank()) products.take(8)
@@ -96,6 +98,16 @@ fun VoucherItemEntrySheet(
     val hsnSuggestions = remember(productName, hsnCode) {
         if (hsnCode.isNotBlank()) emptyList()
         else searchHsn(productName)
+    }
+
+    LaunchedEffect(productName, products) {
+        val query = productName.trim()
+        if (query.length < 2 || hsnCode.isNotBlank()) {
+            suggestedHsn = null
+        } else {
+            kotlinx.coroutines.delay(1200)
+            suggestedHsn = suggestHsn(query, products)
+        }
     }
 
     val qty = qtyText.toDoubleOrNull() ?: 0.0
@@ -253,6 +265,21 @@ fun VoucherItemEntrySheet(
                 colors = fieldColors,
                 singleLine = true
             )
+            suggestedHsn?.let { suggestion ->
+                AssistChip(
+                    onClick = { hsnCode = suggestion.hsnCode },
+                    label = {
+                        Text(
+                            "Suggested HSN: ${suggestion.hsnCode}",
+                            fontSize = 11.sp,
+                            color = TextDark
+                        )
+                    },
+                    colors = AssistChipDefaults.assistChipColors(
+                        containerColor = AppColors.primaryLight
+                    )
+                )
+            }
             Text("Type a keyword to search HSN database", color = TextHint, fontSize = 10.sp)
             if (hsnSuggestions.isNotEmpty()) {
                 Row(

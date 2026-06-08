@@ -3,7 +3,6 @@ import com.example.ui.theme.AppColors
 
 import android.content.Context
 import android.os.Bundle
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -32,7 +31,6 @@ import androidx.compose.ui.unit.sp
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import com.example.data.YearStorageManager
 import com.example.ui.AppViewModel
 import com.example.ui.DashboardViewModel
 import com.example.ui.screens.*
@@ -98,7 +96,6 @@ fun MainAppEntry(
 ) {
     val context = LocalContext.current
     val dbState by viewModel.dbInitState.collectAsState()
-    val storageConfigured by viewModel.isStorageConfigured.collectAsState()
 
     when (val state = dbState) {
         is AppViewModel.DbInitState.Loading -> {
@@ -169,25 +166,9 @@ fun MainAppEntry(
         is AppViewModel.DbInitState.Success -> {
             val isSetupCompleted by viewModel.isSetupCompleted.collectAsState()
             var showSplash by remember { mutableStateOf(true) }
-            val zeroBookPathLabel = remember(storageConfigured) {
-                YearStorageManager.getStoragePathLabel(context)
-            }
 
             if (showSplash) {
                 SplashScreen(onTimeout = { showSplash = false })
-            } else if (!storageConfigured) {
-                StorageAccessScreen(
-                    currentFinancialYear = viewModel.financialYear.collectAsState().value,
-                    storagePathLabel = zeroBookPathLabel,
-                    onAllowAccess = {
-                        val saved = viewModel.grantStorageAccess()
-                        Toast.makeText(
-                            context,
-                            if (saved) "ZeroBook storage folder created." else "Unable to prepare the ZeroBook storage folder.",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                )
             } else {
                 // Persistent Navigation stack
                 val backstack = remember { mutableStateListOf<Screen>() }

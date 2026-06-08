@@ -1,7 +1,6 @@
 package com.example.ui.screens
 
 import android.content.Intent
-import android.net.Uri
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
@@ -31,12 +30,13 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.FileProvider
 import com.example.data.Voucher
+import com.example.services.InvoiceGenerator
 import com.example.services.configureInvoiceWebView
-import com.example.services.generatePdfFromHtml
 import com.example.services.printInvoice
+import com.example.services.shareInvoicePdf
+import com.example.services.shareInvoicePdfToWhatsApp
 import com.example.ui.AppViewModel
 import com.example.ui.theme.AppColors
-import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -47,7 +47,6 @@ fun InvoiceScreen(
     onEditVoucher: (String) -> Unit
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
 
     var voucher by remember { mutableStateOf<Voucher?>(null) }
     var htmlContent by remember { mutableStateOf("") }
@@ -57,18 +56,14 @@ fun InvoiceScreen(
     LaunchedEffect(voucherId) {
         viewModel.getInvoicePreviewData(voucherId)?.let { previewData ->
             voucher = previewData.voucher
-            htmlContent = previewData.html
+            htmlContent = InvoiceGenerator.buildInvoiceHtml(
+                voucher = previewData.voucher,
+                items = previewData.items,
+                business = previewData.profile,
+                party = previewData.party,
+                additionalCharges = previewData.charges
+            )
         }
-    }
-
-    fun sharePdf(file: java.io.File) {
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
-        val intent = Intent(Intent.ACTION_SEND).apply {
-            type = "application/pdf"
-            putExtra(Intent.EXTRA_STREAM, uri)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        context.startActivity(Intent.createChooser(intent, "Share Invoice PDF"))
     }
 
     fun openPdf(file: java.io.File) {
@@ -85,40 +80,18 @@ fun InvoiceScreen(
         }
     }
 
-    fun shareWhatsApp(file: java.io.File) {
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
-        val waIntent = Intent(Intent.ACTION_SEND).apply {
-            type = "application/pdf"
-            putExtra(Intent.EXTRA_STREAM, uri)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            setPackage("com.whatsapp")
-        }
-        try {
-            context.startActivity(waIntent)
-        } catch (_: Exception) {
-            sharePdf(file)
-        }
-    }
-
     fun runPdfAction(onFile: (java.io.File) -> Unit) {
         if (voucher == null) return
         isGeneratingPdf = true
-        scope.launch {
-            val previewData = viewModel.getInvoicePreviewData(voucherId)
-            if (previewData == null) {
-                isGeneratingPdf = false
-                Toast.makeText(context, "Failed to load invoice", Toast.LENGTH_SHORT).show()
-                return@launch
-            }
-            htmlContent = previewData.html
-            generatePdfFromHtml(context, previewData.html, previewData.voucher.voucherNo) { file ->
-                isGeneratingPdf = false
-                if (file != null) {
-                    lastGeneratedPdf = file
-                    Toast.makeText(context, "Saved: ${file.absolutePath}", Toast.LENGTH_LONG).show()
-                    onFile(file)
-                }
-                else Toast.makeText(context, "Failed to generate PDF", Toast.LENGTH_SHORT).show()
+        InvoiceGenerator.generatePdfFromVoucherId(context, voucherId) { file, freshVoucher ->
+            isGeneratingPdf = false
+            if (file != null && freshVoucher != null) {
+                voucher = freshVoucher
+                lastGeneratedPdf = file
+                Toast.makeText(context, "Saved: ${file.absolutePath}", Toast.LENGTH_LONG).show()
+                onFile(file)
+            } else {
+                Toast.makeText(context, "Failed to generate PDF", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -216,7 +189,7 @@ fun InvoiceScreen(
                             icon = { Icon(Icons.Outlined.Share, contentDescription = "Share", modifier = Modifier.size(22.dp), tint = Color(0xFF555555)) },
                             label = "Share",
                             enabled = !isGeneratingPdf,
-                            onClick = { runPdfAction { sharePdf(it) } },
+                            onClick = { runPdfAction { shareInvoicePdf(context, it) } },
                             modifier = Modifier.weight(1f)
                         )
                         BottomActionItem(
@@ -257,7 +230,7 @@ fun InvoiceScreen(
                             label = "WhatsApp",
                             enabled = !isGeneratingPdf,
                             fontSize = 10.sp,
-                            onClick = { runPdfAction { shareWhatsApp(it) } },
+                            onClick = { runPdfAction { shareInvoicePdfToWhatsApp(context, it) } },
                             modifier = Modifier.weight(1f)
                         )
                     }
