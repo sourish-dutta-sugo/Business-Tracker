@@ -16,3 +16,8 @@
 local.properties
 .env
 debug.keystore
+/.build-outputs
+gradle-build*.log
+/gradle/wrapper/tmp-extract
+/gradle/wrapper/gradle-8.10.2-bin.zip
+.idea/vcs.xml
