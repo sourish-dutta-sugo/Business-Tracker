@@ -3,28 +3,115 @@ package com.example.data
 import android.content.Context
 import androidx.room.withTransaction
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.firstOrNull
-import java.util.Calendar
+import kotlinx.coroutines.flow.map
 import java.util.UUID
 import androidx.sqlite.db.SimpleSQLiteQuery
+import org.json.JSONObject
 
 class AppRepository(private val db: AppDatabase) {
+    data class FinancialYearCloseResult(
+        val sourceFinancialYearCode: String,
+        val targetFinancialYearCode: String,
+        val inventoryItemsCarried: Int,
+        val partyBalancesCarried: Int,
+        val ledgerBalancesCarried: Int,
+        val lockedSourceYear: Boolean
+    )
 
     val profile = db.businessProfileDao().getProfile()
-    val parties = db.partyDao().getAllParties()
-    val products = db.productDao().getAllProducts()
-    val vouchers = db.voucherDao().getAllVouchers()
-    val ledgerEntries = db.ledgerDao().getAllLedgerEntries()
-    val cashTransactions = db.bankCashDao().getCashTransactions()
-    val bankTransactions = db.bankCashDao().getBankTransactions()
-    val allTransactions = db.bankCashDao().getAllTransactions()
-    val receiptAllocations = db.receiptAllocationDao().getAllReceiptAllocations()
-    
-    // New Ledger & Bill Tracking flows
-    val ledgerAccounts = db.ledgerAccountDao().getAllLedgerAccounts()
-    val billsReceivable = db.billReceivableDao().getAllBills()
+    val financialYears = db.financialYearDao().getAllFinancialYears()
+
+    fun observeParties(financialYearCode: String): Flow<List<Party>> =
+        combine(
+            db.partyDao().getAllParties(),
+            db.partyFinancialYearBalanceDao().getBalancesForYear(financialYearCode)
+        ) { parties, balances ->
+            val balanceMap = balances.associateBy { it.partyId }
+            parties.map { party ->
+                balanceMap[party.id]?.let { yearBalance ->
+                    party.copy(
+                        openingBalance = yearBalance.openingBalance,
+                        balanceType = yearBalance.balanceType
+                    )
+                } ?: party
+            }
+        }
+
+    fun observeProducts(financialYearCode: String): Flow<List<Product>> =
+        combine(
+            db.productDao().getAllProducts(),
+            db.productFinancialYearBalanceDao().getBalancesForYear(financialYearCode)
+        ) { products, balances ->
+            val balanceMap = balances.associateBy { it.productId }
+            products.map { product ->
+                balanceMap[product.id]?.let { yearBalance ->
+                    val derivedPurchaseRate = if (yearBalance.openingStock > 0.0) {
+                        yearBalance.openingStockValue / yearBalance.openingStock
+                    } else {
+                        product.purchaseRate
+                    }
+                    product.copy(
+                        openingStock = yearBalance.openingStock,
+                        purchaseRate = derivedPurchaseRate
+                    )
+                } ?: product
+            }
+        }
+
+    fun observeVouchers(financialYearCode: String): Flow<List<Voucher>> =
+        db.voucherDao().getAllVouchersForYear(financialYearCode)
+
+    fun observeLedgerEntries(financialYearCode: String): Flow<List<LedgerEntry>> =
+        db.ledgerDao().getAllLedgerEntriesForYear(financialYearCode)
+
+    fun observeTransactions(financialYearCode: String): Flow<List<BankCashTransaction>> =
+        db.bankCashDao().getAllTransactionsForYear(financialYearCode)
+
+    fun observeReceiptAllocations(financialYearCode: String): Flow<List<ReceiptAllocation>> =
+        db.receiptAllocationDao().getAllReceiptAllocations(financialYearCode)
+
+    fun observeLedgerAccounts(financialYearCode: String): Flow<List<LedgerAccount>> =
+        combine(
+            db.ledgerAccountDao().getAllLedgerAccounts(),
+            db.ledgerAccountFinancialYearBalanceDao().getBalancesForYear(financialYearCode)
+        ) { accounts, balances ->
+            val balanceMap = balances.associateBy { it.accountId }
+            accounts.map { account ->
+                balanceMap[account.id]?.let { yearBalance ->
+                    account.copy(
+                        openingBalance = yearBalance.openingBalance,
+                        balanceType = yearBalance.balanceType
+                    )
+                } ?: account
+            }
+        }
+
+    fun observeBillsReceivable(financialYearCode: String): Flow<List<BillReceivable>> =
+        db.billReceivableDao().getAllBills(financialYearCode)
+
+    fun observeAvailableFinancialYearCodes(): Flow<List<String>> =
+        financialYears.map { storedYears ->
+            (storedYears.map { it.code } + FinancialYearUtils.buildGeneratedYears()).distinct().sortedDescending()
+        }
+
+    suspend fun ensureFinancialYearExists(financialYearCode: String, sourceFinancialYearCode: String? = null) {
+        val existing = db.financialYearDao().getFinancialYearByCode(financialYearCode)
+        if (existing == null) {
+            db.financialYearDao().insertFinancialYear(
+                FinancialYear(
+                    code = financialYearCode,
+                    startDate = FinancialYearUtils.startMillisFor(financialYearCode),
+                    endDate = FinancialYearUtils.endMillisFor(financialYearCode),
+                    sourceFinancialYearCode = sourceFinancialYearCode
+                )
+            )
+        }
+    }
 
     suspend fun insertAllocation(allocation: ReceiptAllocation) {
+        ensureFinancialYearExists(allocation.financialYearCode)
         db.receiptAllocationDao().insertAllocation(allocation)
         recalculateOutstandings()
     }
@@ -69,6 +156,7 @@ class AppRepository(private val db: AppDatabase) {
 
     // Profile Operations
     suspend fun insertProfile(profile: BusinessProfile) {
+        ensureFinancialYearExists(profile.fyLabel)
         db.businessProfileDao().insertProfile(profile)
     }
 
@@ -79,7 +167,20 @@ class AppRepository(private val db: AppDatabase) {
     // New Ledger Account Operations
     suspend fun getLedgerAccountById(id: String) = db.ledgerAccountDao().getLedgerAccountById(id)
     suspend fun getLedgerAccountByName(name: String) = db.ledgerAccountDao().getLedgerAccountByName(name)
-    suspend fun insertLedgerAccount(account: LedgerAccount) = db.ledgerAccountDao().insertLedgerAccount(account)
+    suspend fun insertLedgerAccount(account: LedgerAccount, financialYearCode: String) {
+        ensureFinancialYearExists(financialYearCode)
+        db.withTransaction {
+            db.ledgerAccountDao().insertLedgerAccount(account)
+            db.ledgerAccountFinancialYearBalanceDao().upsertBalance(
+                LedgerAccountFinancialYearBalance(
+                    accountId = account.id,
+                    financialYearCode = financialYearCode,
+                    openingBalance = account.openingBalance,
+                    balanceType = account.balanceType
+                )
+            )
+        }
+    }
     suspend fun deleteLedgerAccount(id: String) = db.ledgerAccountDao().deleteLedgerAccount(id)
 
     suspend fun seedLedgersIfEmpty() {
@@ -93,6 +194,8 @@ class AppRepository(private val db: AppDatabase) {
                     LedgerAccount(UUID.randomUUID().toString(), "Sales Return", "Sales Accounts", 0.0, "DR", 1, 0),
                     LedgerAccount(UUID.randomUUID().toString(), "Purchase Account", "Purchase Accounts", 0.0, "DR", 1, 0),
                     LedgerAccount(UUID.randomUUID().toString(), "Purchase Return", "Purchase Accounts", 0.0, "CR", 1, 0),
+                    LedgerAccount(UUID.randomUUID().toString(), "Bills Payable Account", "Current Liabilities", 0.0, "CR", 1, 0),
+                    LedgerAccount(UUID.randomUUID().toString(), "Bills Receivable Account", "Current Assets", 0.0, "DR", 1, 0),
                     
                     LedgerAccount(UUID.randomUUID().toString(), "CGST Payable", "Duties & Taxes", 0.0, "CR", 1, 0),
                     LedgerAccount(UUID.randomUUID().toString(), "SGST Payable", "Duties & Taxes", 0.0, "CR", 1, 0),
@@ -116,8 +219,9 @@ class AppRepository(private val db: AppDatabase) {
     }
 
     // Party Operations (Synchronized with Ledger Accounts)
-    suspend fun insertParty(party: Party) {
+    suspend fun insertParty(party: Party, financialYearCode: String) {
         db.withTransaction {
+            ensureFinancialYearExists(financialYearCode)
             db.partyDao().insertParty(party)
             
             // Sync with LedgerAccount
@@ -148,6 +252,22 @@ class AppRepository(private val db: AppDatabase) {
                 address = party.address ?: ""
             )
             db.ledgerAccountDao().insertLedgerAccount(act)
+            db.partyFinancialYearBalanceDao().upsertBalance(
+                PartyFinancialYearBalance(
+                    partyId = party.id,
+                    financialYearCode = financialYearCode,
+                    openingBalance = party.openingBalance,
+                    balanceType = party.balanceType
+                )
+            )
+            db.ledgerAccountFinancialYearBalanceDao().upsertBalance(
+                LedgerAccountFinancialYearBalance(
+                    accountId = act.id,
+                    financialYearCode = financialYearCode,
+                    openingBalance = party.openingBalance,
+                    balanceType = balanceType
+                )
+            )
         }
     }
 
@@ -159,8 +279,19 @@ class AppRepository(private val db: AppDatabase) {
     }
 
     // Product Operations
-    suspend fun insertProduct(product: Product) {
-        db.productDao().insertProduct(product)
+    suspend fun insertProduct(product: Product, financialYearCode: String) {
+        ensureFinancialYearExists(financialYearCode)
+        db.withTransaction {
+            db.productDao().insertProduct(product)
+            db.productFinancialYearBalanceDao().upsertBalance(
+                ProductFinancialYearBalance(
+                    productId = product.id,
+                    financialYearCode = financialYearCode,
+                    openingStock = product.openingStock,
+                    openingStockValue = product.openingStock * product.purchaseRate
+                )
+            )
+        }
     }
 
     suspend fun deleteProduct(id: String) {
@@ -169,19 +300,12 @@ class AppRepository(private val db: AppDatabase) {
 
     // Helpers
     fun getFinancialYear(timestamp: Long): String {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = timestamp
-        val year = cal.get(Calendar.YEAR)
-        val month = cal.get(Calendar.MONTH) // 0-based
-        return if (month >= Calendar.APRIL) {
-            "$year-${(year + 1) % 100}"
-        } else {
-            "${year - 1}-${year % 100}"
-        }
+        return FinancialYearUtils.financialYearCodeFor(timestamp)
     }
 
     suspend fun generateNextVoucherNo(type: String, timestamp: Long): String {
         val fy = getFinancialYear(timestamp)
+        ensureFinancialYearExists(fy)
         val prefix = when (type) {
             "SALE" -> "SAL"
             "PURCHASE" -> "PUR"
@@ -194,7 +318,7 @@ class AppRepository(private val db: AppDatabase) {
             else -> "VCH"
         }
         val pattern = "$prefix/$fy/%"
-        val latestNo = db.voucherDao().getLatestVoucherNo(type, pattern)
+        val latestNo = db.voucherDao().getLatestVoucherNo(type, fy, pattern)
         val sequenceNum = if (latestNo != null) {
             val parts = latestNo.split("/")
             if (parts.size >= 3) {
@@ -218,25 +342,38 @@ class AppRepository(private val db: AppDatabase) {
         extras: VoucherSaveExtras = VoucherSaveExtras()
     ) {
         db.withTransaction {
+            val resolvedFinancialYearCode = voucher.financialYearCode.ifBlank { getFinancialYear(voucher.date) }
+            ensureFinancialYearExists(resolvedFinancialYearCode)
+            val yearState = db.financialYearDao().getFinancialYearByCode(resolvedFinancialYearCode)
+            require(yearState?.isLocked != true) { "Financial year $resolvedFinancialYearCode is locked." }
+            val resolvedVoucher = voucher.copy(financialYearCode = resolvedFinancialYearCode)
+
             // 1. Delete if existing
-            db.voucherDao().deleteVoucher(voucher.id)
-            db.voucherItemDao().deleteItemsForVoucher(voucher.id)
-            db.ledgerDao().deleteLedgerEntriesForVoucher(voucher.id)
-            db.bankCashDao().deleteTransactionsByVoucher(voucher.id)
-            db.receiptAllocationDao().deleteAllocationsByReceipt(voucher.id)
-            db.billReceivableDao().deleteBillByVoucherId(voucher.id)
+            db.voucherDao().deleteVoucher(resolvedVoucher.id)
+            db.voucherItemDao().deleteItemsForVoucher(resolvedVoucher.id)
+            db.ledgerDao().deleteLedgerEntriesForVoucher(resolvedVoucher.id)
+            db.bankCashDao().deleteTransactionsByVoucher(resolvedVoucher.id)
+            db.receiptAllocationDao().deleteAllocationsByReceipt(resolvedVoucher.id)
+            db.billReceivableDao().deleteBillByVoucherId(resolvedVoucher.id)
 
             // 2. Insert Voucher & Items
-            db.voucherDao().insertVoucher(voucher)
-            db.voucherItemDao().insertItems(items.map { it.copy(voucherId = voucher.id) })
+            db.voucherDao().insertVoucher(resolvedVoucher)
+            db.voucherItemDao().insertItems(
+                items.map {
+                    it.copy(
+                        voucherId = resolvedVoucher.id,
+                        financialYearCode = resolvedFinancialYearCode
+                    )
+                }
+            )
 
             // 3. Auto-generate Ledger entries
             val ledgerList = mutableListOf<LedgerEntry>()
             val partyDesc = partyName ?: "Cash/Bank Account"
 
-            when (voucher.type) {
+            when (resolvedVoucher.type) {
                 "SALE" -> {
-                    if (voucher.paymentMode == "PART PAYMENT") {
+                    if (resolvedVoucher.paymentMode == "PART PAYMENT") {
                         val paidHead = if (extras.partialPaymentSubmode == "CASH") "Cash" else "Bank"
                         if (extras.partialAmountPaid > 0.0) {
                             ledgerList.add(
@@ -718,19 +855,21 @@ class AppRepository(private val db: AppDatabase) {
             }
 
             if (ledgerList.isNotEmpty()) {
-                db.ledgerDao().insertLedgerEntries(ledgerList)
+                db.ledgerDao().insertLedgerEntries(
+                    ledgerList.map { it.copy(financialYearCode = resolvedFinancialYearCode) }
+                )
             }
 
-            saveVoucherExtras(voucher.id, voucher.paymentMode, extras)
+            saveVoucherExtras(resolvedVoucher.id, resolvedVoucher.paymentMode, extras)
 
             // 4. Auto-register Cash or Bank trans
-            val isReceipt = (voucher.type == "RECEIPT" || voucher.type == "SALE" || voucher.type == "PURCHASE_RETURN")
-            val isPayment = (voucher.type == "PAYMENT" || voucher.type == "SALE_RETURN")
+            val isReceipt = (resolvedVoucher.type == "RECEIPT" || resolvedVoucher.type == "SALE" || resolvedVoucher.type == "PURCHASE_RETURN")
+            val isPayment = (resolvedVoucher.type == "PAYMENT" || resolvedVoucher.type == "SALE_RETURN")
             
-            if ((isReceipt || isPayment) && voucher.paymentMode != "CREDIT") {
+            if ((isReceipt || isPayment) && resolvedVoucher.paymentMode != "CREDIT") {
                 val txType = if (isReceipt) "RECEIPT" else "PAYMENT"
-                val transactionMode = if (voucher.paymentMode == "PART PAYMENT") extras.partialPaymentSubmode else voucher.paymentMode
-                val transactionAmount = if (voucher.paymentMode == "PART PAYMENT") extras.partialAmountPaid else voucher.netAmount
+                val transactionMode = if (resolvedVoucher.paymentMode == "PART PAYMENT") extras.partialPaymentSubmode else resolvedVoucher.paymentMode
+                val transactionAmount = if (resolvedVoucher.paymentMode == "PART PAYMENT") extras.partialAmountPaid else resolvedVoucher.netAmount
                 if (transactionAmount > 0.0) {
                 db.bankCashDao().insertTransaction(
                     BankCashTransaction(
@@ -746,6 +885,7 @@ class AppRepository(private val db: AppDatabase) {
                         chequeDate = voucher.chequeDate,
                         bankName = voucher.bankName,
                         receiptImagePath = null,
+                        financialYearCode = resolvedFinancialYearCode,
                         createdAt = System.currentTimeMillis()
                     )
                 )
@@ -753,26 +893,27 @@ class AppRepository(private val db: AppDatabase) {
             }
 
             // 5. Auto-register Credit Sale under BillReceivable
-            if (voucher.type == "SALE" && (voucher.paymentMode == "CREDIT" || voucher.paymentMode == "PART PAYMENT") && voucher.partyId != null) {
+            if (resolvedVoucher.type == "SALE" && (resolvedVoucher.paymentMode == "CREDIT" || resolvedVoucher.paymentMode == "PART PAYMENT") && resolvedVoucher.partyId != null) {
                 val creditPeriodMs = 15L * 24L * 3600L * 1000L // 15 days credit term
                 val dueDateVal = extras.creditDueDate.takeIf { it.isNotBlank() }?.let {
                     runCatching { it.toLong() }.getOrNull()
-                } ?: (voucher.date + creditPeriodMs)
-                val originalOutstanding = if (voucher.paymentMode == "PART PAYMENT") extras.remainingCreditAmount else voucher.netAmount
+                } ?: (resolvedVoucher.date + creditPeriodMs)
+                val originalOutstanding = if (resolvedVoucher.paymentMode == "PART PAYMENT") extras.remainingCreditAmount else resolvedVoucher.netAmount
                 val bill = BillReceivable(
                     id = UUID.randomUUID().toString(),
-                    voucherId = voucher.id,
-                    voucherNo = voucher.voucherNo,
-                    partyId = voucher.partyId,
+                    voucherId = resolvedVoucher.id,
+                    voucherNo = resolvedVoucher.voucherNo,
+                    partyId = resolvedVoucher.partyId,
                     partyName = partyDesc,
-                    billDate = voucher.date,
+                    billDate = resolvedVoucher.date,
                     dueDate = dueDateVal,
-                    originalAmount = voucher.netAmount,
-                    paidAmount = voucher.netAmount - originalOutstanding,
+                    originalAmount = resolvedVoucher.netAmount,
+                    paidAmount = resolvedVoucher.netAmount - originalOutstanding,
                     outstandingAmount = originalOutstanding,
-                    status = if (originalOutstanding < voucher.netAmount) "PARTIAL" else "UNPAID",
+                    status = if (originalOutstanding < resolvedVoucher.netAmount) "PARTIAL" else "UNPAID",
                     daysOverdue = 0,
                     lastReminderDate = null,
+                    financialYearCode = resolvedFinancialYearCode,
                     createdAt = System.currentTimeMillis()
                 )
                 db.billReceivableDao().insertBill(bill)
@@ -784,7 +925,10 @@ class AppRepository(private val db: AppDatabase) {
     }
 
     suspend fun recalculateOutstandings() {
-        val bills = db.billReceivableDao().getAllBillsSync()
+        val yearCodes = db.financialYearDao().getAllFinancialYearsSync().map { it.code }.ifEmpty {
+            listOf(FinancialYearUtils.currentFinancialYearCode())
+        }
+        val bills = yearCodes.flatMap { db.billReceivableDao().getAllBillsSync(it) }
         for (bill in bills) {
             val billAllocations = db.receiptAllocationDao().getAllocationsForInvoiceSync(bill.voucherId)
             val totalAllocated = billAllocations.sumOf { it.allocatedAmount }
@@ -878,39 +1022,46 @@ class AppRepository(private val db: AppDatabase) {
     // Direct Cash/Bank manual transaction
     suspend fun saveBankCashTransaction(transaction: BankCashTransaction) {
         db.withTransaction {
-            db.bankCashDao().insertTransaction(transaction)
+            val resolvedFinancialYearCode = transaction.financialYearCode.ifBlank { getFinancialYear(transaction.date) }
+            ensureFinancialYearExists(resolvedFinancialYearCode)
+            val yearState = db.financialYearDao().getFinancialYearByCode(resolvedFinancialYearCode)
+            require(yearState?.isLocked != true) { "Financial year $resolvedFinancialYearCode is locked." }
+            val resolvedTransaction = transaction.copy(financialYearCode = resolvedFinancialYearCode)
+            db.bankCashDao().insertTransaction(resolvedTransaction)
             
             // Post manual bank/cash to ledger entries
-            val drHead = if (transaction.type == "RECEIPT") {
-                if (transaction.mode == "CASH") "Cash" else "Bank"
+            val drHead = if (resolvedTransaction.type == "RECEIPT") {
+                if (resolvedTransaction.mode == "CASH") "Cash" else "Bank"
             } else {
-                "Party: ${transaction.partyName ?: "General"}"
+                "Party: ${resolvedTransaction.partyName ?: "General"}"
             }
-            val crHead = if (transaction.type == "RECEIPT") {
-                "Party: ${transaction.partyName ?: "General"}"
+            val crHead = if (resolvedTransaction.type == "RECEIPT") {
+                "Party: ${resolvedTransaction.partyName ?: "General"}"
             } else {
-                if (transaction.mode == "CASH") "Cash" else "Bank"
+                if (resolvedTransaction.mode == "CASH") "Cash" else "Bank"
             }
 
             val ledgerEntries = listOf(
                 LedgerEntry(
                     id = UUID.randomUUID().toString(),
                     accountHead = drHead,
-                    voucherId = transaction.id,
-                    date = transaction.date,
-                    debit = transaction.amount,
+                    voucherId = resolvedTransaction.id,
+                    date = resolvedTransaction.date,
+                    debit = resolvedTransaction.amount,
                     credit = 0.0,
-                    narration = transaction.narration,
+                    narration = resolvedTransaction.narration,
+                    financialYearCode = resolvedFinancialYearCode,
                     createdAt = System.currentTimeMillis()
                 ),
                 LedgerEntry(
                     id = UUID.randomUUID().toString(),
                     accountHead = crHead,
-                    voucherId = transaction.id,
-                    date = transaction.date,
+                    voucherId = resolvedTransaction.id,
+                    date = resolvedTransaction.date,
                     debit = 0.0,
-                    credit = transaction.amount,
-                    narration = transaction.narration,
+                    credit = resolvedTransaction.amount,
+                    narration = resolvedTransaction.narration,
+                    financialYearCode = resolvedFinancialYearCode,
                     createdAt = System.currentTimeMillis()
                 )
             )
@@ -924,6 +1075,145 @@ class AppRepository(private val db: AppDatabase) {
             db.ledgerDao().deleteLedgerEntriesForVoucher(id)
         }
     }
+
+    suspend fun closeFinancialYear(
+        sourceFinancialYearCode: String,
+        targetFinancialYearCode: String = FinancialYearUtils.nextFinancialYear(sourceFinancialYearCode),
+        lockSourceYear: Boolean
+    ): FinancialYearCloseResult {
+        return db.withTransaction {
+            ensureFinancialYearExists(sourceFinancialYearCode)
+            ensureFinancialYearExists(targetFinancialYearCode, sourceFinancialYearCode)
+
+            val sourceYear = db.financialYearDao().getFinancialYearByCode(sourceFinancialYearCode)
+                ?: error("Source financial year not found")
+            check(!sourceYear.isLocked) { "Financial year $sourceFinancialYearCode is already locked." }
+
+            val parties = db.partyDao().getAllPartiesSync()
+            val partyBalances = db.partyFinancialYearBalanceDao().getBalancesForYearSync(sourceFinancialYearCode)
+                .associateBy { it.partyId }
+            val products = db.productDao().getAllProductsSync()
+            val productBalances = db.productFinancialYearBalanceDao().getBalancesForYearSync(sourceFinancialYearCode)
+                .associateBy { it.productId }
+            val ledgerAccounts = db.ledgerAccountDao().getAllLedgerAccountsSync()
+            val ledgerBalanceRows = db.ledgerAccountFinancialYearBalanceDao().getBalancesForYearSync(sourceFinancialYearCode)
+                .associateBy { it.accountId }
+            val ledgerEntries = db.ledgerDao().getAllLedgerEntriesForYearSync(sourceFinancialYearCode)
+            val vouchers = db.voucherDao().getAllVouchersForYearSync(sourceFinancialYearCode)
+            val voucherMap = vouchers.associateBy { it.id }
+            val voucherItems = db.voucherItemDao().getAllItemsForYearSync(sourceFinancialYearCode)
+
+            val closingLedgerBalances = mutableMapOf<String, Double>()
+            ledgerAccounts.forEach { account ->
+                val openingRow = ledgerBalanceRows[account.id]
+                val openingSigned = signedAmount(
+                    amount = openingRow?.openingBalance ?: account.openingBalance,
+                    balanceType = openingRow?.balanceType ?: account.balanceType
+                )
+                closingLedgerBalances[account.id] = openingSigned
+            }
+            ledgerEntries.forEach { entry ->
+                val accountId = ledgerAccounts.find { it.name == entry.accountHead }?.id ?: return@forEach
+                closingLedgerBalances[accountId] = (closingLedgerBalances[accountId] ?: 0.0) + (entry.debit - entry.credit)
+            }
+
+            val nextLedgerBalances = ledgerAccounts.map { account ->
+                val closingSigned = closingLedgerBalances[account.id] ?: 0.0
+                LedgerAccountFinancialYearBalance(
+                    accountId = account.id,
+                    financialYearCode = targetFinancialYearCode,
+                    openingBalance = kotlin.math.abs(closingSigned),
+                    balanceType = if (closingSigned < 0) "CR" else "DR"
+                )
+            }
+            db.ledgerAccountFinancialYearBalanceDao().upsertBalances(nextLedgerBalances)
+
+            val nextPartyBalances = parties.map { party ->
+                val openingRow = partyBalances[party.id]
+                val signedOpening = signedAmount(
+                    amount = openingRow?.openingBalance ?: party.openingBalance,
+                    balanceType = openingRow?.balanceType ?: party.balanceType
+                )
+                val movement = ledgerEntries
+                    .filter { it.accountHead == "Party: ${party.name}" }
+                    .sumOf { it.debit - it.credit }
+                val closingSigned = signedOpening + movement
+                PartyFinancialYearBalance(
+                    partyId = party.id,
+                    financialYearCode = targetFinancialYearCode,
+                    openingBalance = kotlin.math.abs(closingSigned),
+                    balanceType = if (closingSigned < 0) "CR" else "DR"
+                )
+            }
+            db.partyFinancialYearBalanceDao().upsertBalances(nextPartyBalances)
+
+            val nextProductBalances = products.map { product ->
+                val openingRow = productBalances[product.id]
+                val openingStock = openingRow?.openingStock ?: product.openingStock
+                val movementQty = voucherItems
+                    .filter { it.productId == product.id }
+                    .sumOf { item ->
+                        when (voucherMap[item.voucherId]?.type) {
+                            "PURCHASE", "PURCHASE_RETURN_IN" -> item.qty
+                            "SALE_RETURN" -> item.qty
+                            "SALE", "PURCHASE_RETURN" -> -item.qty
+                            else -> 0.0
+                        }
+                    }
+                val closingQty = (openingStock + movementQty).coerceAtLeast(0.0)
+                ProductFinancialYearBalance(
+                    productId = product.id,
+                    financialYearCode = targetFinancialYearCode,
+                    openingStock = closingQty,
+                    openingStockValue = closingQty * product.purchaseRate
+                )
+            }
+            db.productFinancialYearBalanceDao().upsertBalances(nextProductBalances)
+
+            val completedLog = db.financialYearAuditLogDao().getLog(
+                financialYearCode = sourceFinancialYearCode,
+                targetFinancialYearCode = targetFinancialYearCode,
+                action = "YEAR_CLOSE_COMPLETED"
+            )
+            if (completedLog == null) {
+                db.financialYearAuditLogDao().insertLog(
+                    FinancialYearAuditLog(
+                        id = UUID.randomUUID().toString(),
+                        action = "YEAR_CLOSE_COMPLETED",
+                        financialYearCode = sourceFinancialYearCode,
+                        targetFinancialYearCode = targetFinancialYearCode,
+                        detailsJson = JSONObject()
+                            .put("inventoryItemsCarried", nextProductBalances.count())
+                            .put("partyBalancesCarried", nextPartyBalances.count())
+                            .put("ledgerBalancesCarried", nextLedgerBalances.count())
+                            .put("lockedSourceYear", lockSourceYear)
+                            .toString()
+                    )
+                )
+            }
+
+            val closedAt = System.currentTimeMillis()
+            db.financialYearDao().updateYearStatus(
+                code = sourceFinancialYearCode,
+                isClosed = true,
+                isLocked = lockSourceYear,
+                closedAt = closedAt,
+                lockedAt = if (lockSourceYear) closedAt else null
+            )
+
+            FinancialYearCloseResult(
+                sourceFinancialYearCode = sourceFinancialYearCode,
+                targetFinancialYearCode = targetFinancialYearCode,
+                inventoryItemsCarried = nextProductBalances.count(),
+                partyBalancesCarried = nextPartyBalances.count(),
+                ledgerBalancesCarried = nextLedgerBalances.count(),
+                lockedSourceYear = lockSourceYear
+            )
+        }
+    }
+
+    private fun signedAmount(amount: Double, balanceType: String): Double =
+        if (balanceType.equals("CR", ignoreCase = true)) -amount else amount
 
     suspend fun insertSampleData() {
         seedLedgersIfEmpty()

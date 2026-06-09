@@ -1,6 +1,9 @@
 package com.example.data
 
-import androidx.room.*
+import androidx.room.Dao
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -16,9 +19,41 @@ interface BusinessProfileDao {
 }
 
 @Dao
+interface FinancialYearDao {
+    @Query("SELECT * FROM financial_years ORDER BY startDate DESC")
+    fun getAllFinancialYears(): Flow<List<FinancialYear>>
+
+    @Query("SELECT * FROM financial_years ORDER BY startDate DESC")
+    suspend fun getAllFinancialYearsSync(): List<FinancialYear>
+
+    @Query("SELECT * FROM financial_years WHERE code = :code LIMIT 1")
+    suspend fun getFinancialYearByCode(code: String): FinancialYear?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertFinancialYear(financialYear: FinancialYear)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertFinancialYears(financialYears: List<FinancialYear>)
+
+    @Query(
+        "UPDATE financial_years SET isClosed = :isClosed, isLocked = :isLocked, closedAt = :closedAt, lockedAt = :lockedAt WHERE code = :code"
+    )
+    suspend fun updateYearStatus(
+        code: String,
+        isClosed: Boolean,
+        isLocked: Boolean,
+        closedAt: Long?,
+        lockedAt: Long?
+    )
+}
+
+@Dao
 interface PartyDao {
     @Query("SELECT * FROM parties ORDER BY name ASC")
     fun getAllParties(): Flow<List<Party>>
+
+    @Query("SELECT * FROM parties ORDER BY name ASC")
+    suspend fun getAllPartiesSync(): List<Party>
 
     @Query("SELECT * FROM parties WHERE id = :id LIMIT 1")
     suspend fun getPartyById(id: String): Party?
@@ -31,9 +66,30 @@ interface PartyDao {
 }
 
 @Dao
+interface PartyFinancialYearBalanceDao {
+    @Query("SELECT * FROM party_financial_year_balances WHERE financialYearCode = :financialYearCode")
+    fun getBalancesForYear(financialYearCode: String): Flow<List<PartyFinancialYearBalance>>
+
+    @Query("SELECT * FROM party_financial_year_balances WHERE financialYearCode = :financialYearCode")
+    suspend fun getBalancesForYearSync(financialYearCode: String): List<PartyFinancialYearBalance>
+
+    @Query("SELECT * FROM party_financial_year_balances WHERE partyId = :partyId AND financialYearCode = :financialYearCode LIMIT 1")
+    suspend fun getBalance(partyId: String, financialYearCode: String): PartyFinancialYearBalance?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertBalance(balance: PartyFinancialYearBalance)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertBalances(balances: List<PartyFinancialYearBalance>)
+}
+
+@Dao
 interface ProductDao {
     @Query("SELECT * FROM products ORDER BY name ASC")
     fun getAllProducts(): Flow<List<Product>>
+
+    @Query("SELECT * FROM products ORDER BY name ASC")
+    suspend fun getAllProductsSync(): List<Product>
 
     @Query("SELECT * FROM products WHERE id = :id LIMIT 1")
     suspend fun getProductById(id: String): Product?
@@ -46,18 +102,39 @@ interface ProductDao {
 }
 
 @Dao
+interface ProductFinancialYearBalanceDao {
+    @Query("SELECT * FROM product_financial_year_balances WHERE financialYearCode = :financialYearCode")
+    fun getBalancesForYear(financialYearCode: String): Flow<List<ProductFinancialYearBalance>>
+
+    @Query("SELECT * FROM product_financial_year_balances WHERE financialYearCode = :financialYearCode")
+    suspend fun getBalancesForYearSync(financialYearCode: String): List<ProductFinancialYearBalance>
+
+    @Query("SELECT * FROM product_financial_year_balances WHERE productId = :productId AND financialYearCode = :financialYearCode LIMIT 1")
+    suspend fun getBalance(productId: String, financialYearCode: String): ProductFinancialYearBalance?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertBalance(balance: ProductFinancialYearBalance)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertBalances(balances: List<ProductFinancialYearBalance>)
+}
+
+@Dao
 interface VoucherDao {
-    @Query("SELECT * FROM vouchers ORDER BY date DESC, createdAt DESC")
-    fun getAllVouchers(): Flow<List<Voucher>>
+    @Query("SELECT * FROM vouchers WHERE financialYearCode = :financialYearCode ORDER BY date DESC, createdAt DESC")
+    fun getAllVouchersForYear(financialYearCode: String): Flow<List<Voucher>>
+
+    @Query("SELECT * FROM vouchers WHERE financialYearCode = :financialYearCode ORDER BY date DESC, createdAt DESC")
+    suspend fun getAllVouchersForYearSync(financialYearCode: String): List<Voucher>
 
     @Query("SELECT * FROM vouchers WHERE id = :id LIMIT 1")
     suspend fun getVoucherById(id: String): Voucher?
 
-    @Query("SELECT * FROM vouchers WHERE type = :type ORDER BY date DESC, createdAt DESC")
-    fun getVouchersByType(type: String): Flow<List<Voucher>>
+    @Query("SELECT * FROM vouchers WHERE type = :type AND financialYearCode = :financialYearCode ORDER BY date DESC, createdAt DESC")
+    fun getVouchersByType(type: String, financialYearCode: String): Flow<List<Voucher>>
 
-    @Query("SELECT voucherNo FROM vouchers WHERE type = :type AND voucherNo LIKE :pattern ORDER BY voucherNo DESC LIMIT 1")
-    suspend fun getLatestVoucherNo(type: String, pattern: String): String?
+    @Query("SELECT voucherNo FROM vouchers WHERE type = :type AND financialYearCode = :financialYearCode AND voucherNo LIKE :pattern ORDER BY voucherNo DESC LIMIT 1")
+    suspend fun getLatestVoucherNo(type: String, financialYearCode: String, pattern: String): String?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertVoucher(voucher: Voucher)
@@ -74,6 +151,9 @@ interface VoucherItemDao {
     @Query("SELECT * FROM voucher_items WHERE voucherId = :voucherId")
     suspend fun getItemsForVoucherSync(voucherId: String): List<VoucherItem>
 
+    @Query("SELECT * FROM voucher_items WHERE financialYearCode = :financialYearCode")
+    suspend fun getAllItemsForYearSync(financialYearCode: String): List<VoucherItem>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertItems(items: List<VoucherItem>)
 
@@ -83,11 +163,14 @@ interface VoucherItemDao {
 
 @Dao
 interface LedgerDao {
-    @Query("SELECT * FROM ledger_entries ORDER BY date DESC, createdAt DESC")
-    fun getAllLedgerEntries(): Flow<List<LedgerEntry>>
+    @Query("SELECT * FROM ledger_entries WHERE financialYearCode = :financialYearCode ORDER BY date DESC, createdAt DESC")
+    fun getAllLedgerEntriesForYear(financialYearCode: String): Flow<List<LedgerEntry>>
 
-    @Query("SELECT * FROM ledger_entries WHERE accountHead = :accountHead ORDER BY date DESC, createdAt DESC")
-    fun getLedgerEntriesByAccount(accountHead: String): Flow<List<LedgerEntry>>
+    @Query("SELECT * FROM ledger_entries WHERE financialYearCode = :financialYearCode ORDER BY date DESC, createdAt DESC")
+    suspend fun getAllLedgerEntriesForYearSync(financialYearCode: String): List<LedgerEntry>
+
+    @Query("SELECT * FROM ledger_entries WHERE accountHead = :accountHead AND financialYearCode = :financialYearCode ORDER BY date DESC, createdAt DESC")
+    fun getLedgerEntriesByAccount(accountHead: String, financialYearCode: String): Flow<List<LedgerEntry>>
 
     @Query("SELECT * FROM ledger_entries WHERE voucherId = :voucherId")
     suspend fun getLedgerEntriesByVoucherId(voucherId: String): List<LedgerEntry>
@@ -101,14 +184,17 @@ interface LedgerDao {
 
 @Dao
 interface BankCashDao {
-    @Query("SELECT * FROM bank_cash_transactions ORDER BY date DESC, createdAt DESC")
-    fun getAllTransactions(): Flow<List<BankCashTransaction>>
+    @Query("SELECT * FROM bank_cash_transactions WHERE financialYearCode = :financialYearCode ORDER BY date DESC, createdAt DESC")
+    fun getAllTransactionsForYear(financialYearCode: String): Flow<List<BankCashTransaction>>
 
-    @Query("SELECT * FROM bank_cash_transactions WHERE mode = 'CASH' ORDER BY date DESC, createdAt DESC")
-    fun getCashTransactions(): Flow<List<BankCashTransaction>>
+    @Query("SELECT * FROM bank_cash_transactions WHERE financialYearCode = :financialYearCode ORDER BY date DESC, createdAt DESC")
+    suspend fun getAllTransactionsForYearSync(financialYearCode: String): List<BankCashTransaction>
 
-    @Query("SELECT * FROM bank_cash_transactions WHERE mode != 'CASH' ORDER BY date DESC, createdAt DESC")
-    fun getBankTransactions(): Flow<List<BankCashTransaction>>
+    @Query("SELECT * FROM bank_cash_transactions WHERE financialYearCode = :financialYearCode AND mode = 'CASH' ORDER BY date DESC, createdAt DESC")
+    fun getCashTransactions(financialYearCode: String): Flow<List<BankCashTransaction>>
+
+    @Query("SELECT * FROM bank_cash_transactions WHERE financialYearCode = :financialYearCode AND mode != 'CASH' ORDER BY date DESC, createdAt DESC")
+    fun getBankTransactions(financialYearCode: String): Flow<List<BankCashTransaction>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertTransaction(transaction: BankCashTransaction)
@@ -125,8 +211,8 @@ interface ReceiptAllocationDao {
     @Query("SELECT * FROM receipt_allocations WHERE receiptId = :receiptId")
     fun getAllocationsForReceipt(receiptId: String): Flow<List<ReceiptAllocation>>
 
-    @Query("SELECT * FROM receipt_allocations")
-    fun getAllReceiptAllocations(): Flow<List<ReceiptAllocation>>
+    @Query("SELECT * FROM receipt_allocations WHERE financialYearCode = :financialYearCode")
+    fun getAllReceiptAllocations(financialYearCode: String): Flow<List<ReceiptAllocation>>
 
     @Query("SELECT * FROM receipt_allocations WHERE invoiceId = :invoiceId")
     suspend fun getAllocationsForInvoiceSync(invoiceId: String): List<ReceiptAllocation>
@@ -169,18 +255,36 @@ interface LedgerAccountDao {
 
     @Query("DELETE FROM ledger_accounts WHERE id = :id")
     suspend fun deleteLedgerAccount(id: String)
-    
+
     @Query("DELETE FROM ledger_accounts WHERE partyId = :partyId")
     suspend fun deleteLedgerAccountByParty(partyId: String)
 }
 
 @Dao
-interface BillReceivableDao {
-    @Query("SELECT * FROM bills_receivable ORDER BY billDate DESC")
-    fun getAllBills(): Flow<List<BillReceivable>>
+interface LedgerAccountFinancialYearBalanceDao {
+    @Query("SELECT * FROM ledger_account_financial_year_balances WHERE financialYearCode = :financialYearCode")
+    fun getBalancesForYear(financialYearCode: String): Flow<List<LedgerAccountFinancialYearBalance>>
 
-    @Query("SELECT * FROM bills_receivable ORDER BY billDate DESC")
-    suspend fun getAllBillsSync(): List<BillReceivable>
+    @Query("SELECT * FROM ledger_account_financial_year_balances WHERE financialYearCode = :financialYearCode")
+    suspend fun getBalancesForYearSync(financialYearCode: String): List<LedgerAccountFinancialYearBalance>
+
+    @Query("SELECT * FROM ledger_account_financial_year_balances WHERE accountId = :accountId AND financialYearCode = :financialYearCode LIMIT 1")
+    suspend fun getBalance(accountId: String, financialYearCode: String): LedgerAccountFinancialYearBalance?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertBalance(balance: LedgerAccountFinancialYearBalance)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertBalances(balances: List<LedgerAccountFinancialYearBalance>)
+}
+
+@Dao
+interface BillReceivableDao {
+    @Query("SELECT * FROM bills_receivable WHERE financialYearCode = :financialYearCode ORDER BY billDate DESC")
+    fun getAllBills(financialYearCode: String): Flow<List<BillReceivable>>
+
+    @Query("SELECT * FROM bills_receivable WHERE financialYearCode = :financialYearCode ORDER BY billDate DESC")
+    suspend fun getAllBillsSync(financialYearCode: String): List<BillReceivable>
 
     @Query("SELECT * FROM bills_receivable WHERE voucherId = :voucherId LIMIT 1")
     suspend fun getBillByVoucherId(voucherId: String): BillReceivable?
@@ -190,7 +294,20 @@ interface BillReceivableDao {
 
     @Query("DELETE FROM bills_receivable WHERE voucherId = :voucherId")
     suspend fun deleteBillByVoucherId(voucherId: String)
+}
 
-    @Query("DELETE FROM bills_receivable")
-    suspend fun deleteAllBills()
+@Dao
+interface FinancialYearAuditLogDao {
+    @Query("SELECT * FROM financial_year_audit_logs WHERE financialYearCode = :financialYearCode ORDER BY createdAt DESC")
+    fun getLogsForYear(financialYearCode: String): Flow<List<FinancialYearAuditLog>>
+
+    @Query("SELECT * FROM financial_year_audit_logs WHERE financialYearCode = :financialYearCode AND targetFinancialYearCode = :targetFinancialYearCode AND action = :action LIMIT 1")
+    suspend fun getLog(
+        financialYearCode: String,
+        targetFinancialYearCode: String?,
+        action: String
+    ): FinancialYearAuditLog?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertLog(log: FinancialYearAuditLog)
 }

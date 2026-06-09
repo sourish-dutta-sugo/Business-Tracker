@@ -80,7 +80,9 @@ object EmailReminderScheduler {
 
         val db = AppDatabase.getDatabase(context)
         val profile = db.businessProfileDao().getProfileSync()
-        val bills = db.billReceivableDao().getAllBillsSync()
+        val activeFinancialYearCode = profile?.fyLabel?.takeIf { it.isNotBlank() }
+            ?: FinancialYearUtils.currentFinancialYearCode()
+        val bills = db.billReceivableDao().getAllBillsSync(activeFinancialYearCode)
             .filter { it.outstandingAmount > 0.0 && selectedRecipientIds.contains(it.partyId) }
 
         if (bills.isEmpty()) {

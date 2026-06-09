@@ -8,31 +8,41 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [
+        FinancialYear::class,
         BusinessProfile::class,
         Party::class,
+        PartyFinancialYearBalance::class,
         Product::class,
+        ProductFinancialYearBalance::class,
         Voucher::class,
         VoucherItem::class,
         LedgerEntry::class,
         BankCashTransaction::class,
         ReceiptAllocation::class,
         LedgerAccount::class,
-        BillReceivable::class
+        LedgerAccountFinancialYearBalance::class,
+        BillReceivable::class,
+        FinancialYearAuditLog::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
+    abstract fun financialYearDao(): FinancialYearDao
     abstract fun businessProfileDao(): BusinessProfileDao
     abstract fun partyDao(): PartyDao
+    abstract fun partyFinancialYearBalanceDao(): PartyFinancialYearBalanceDao
     abstract fun productDao(): ProductDao
+    abstract fun productFinancialYearBalanceDao(): ProductFinancialYearBalanceDao
     abstract fun voucherDao(): VoucherDao
     abstract fun voucherItemDao(): VoucherItemDao
     abstract fun ledgerDao(): LedgerDao
     abstract fun bankCashDao(): BankCashDao
     abstract fun receiptAllocationDao(): ReceiptAllocationDao
     abstract fun ledgerAccountDao(): LedgerAccountDao
+    abstract fun ledgerAccountFinancialYearBalanceDao(): LedgerAccountFinancialYearBalanceDao
     abstract fun billReceivableDao(): BillReceivableDao
+    abstract fun financialYearAuditLogDao(): FinancialYearAuditLogDao
 
     companion object {
         @Volatile
@@ -45,21 +55,22 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "ZeroBook.db"
                 )
-                .addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+                .addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
                 .addCallback(object : RoomDatabase.Callback() {
                     override fun onCreate(db: SupportSQLiteDatabase) {
                         super.onCreate(db)
                         ensureVoucherExtensionColumns(db)
                         ensureBusinessProfileExtensionColumns(db)
+                        ensureFinancialYearColumnsAndIndexes(db)
                     }
 
                     override fun onOpen(db: SupportSQLiteDatabase) {
                         super.onOpen(db)
                         ensureVoucherExtensionColumns(db)
                         ensureBusinessProfileExtensionColumns(db)
+                        ensureFinancialYearColumnsAndIndexes(db)
                     }
                 })
-                .fallbackToDestructiveMigration()
                 .build()
                 INSTANCE = instance
                 instance

@@ -3,12 +3,9 @@ package com.example.services
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
-import android.graphics.pdf.PdfDocument
-import android.os.Handler
-import android.os.Looper
+import android.os.CancellationSignal
 import android.print.PrintAttributes
 import android.print.PrintManager
-import android.view.View
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.core.content.FileProvider
@@ -22,18 +19,19 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.io.FileOutputStream
+import java.security.MessageDigest
 import java.text.DecimalFormat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import kotlin.math.abs
-import kotlin.math.ceil
-import kotlin.math.max
 import kotlin.math.roundToInt
 
 object InvoiceGenerator {
@@ -52,9 +50,75 @@ object InvoiceGenerator {
         val items: List<VoucherItem>,
         val charges: List<AdditionalCharge>,
         val profile: BusinessProfile,
-        val party: Party?
+        val party: Party?,
+        val extras: VoucherRenderExtras
     )
 
+    data class InvoiceTotals(
+        val totalQuantity: Double,
+        val taxableAmount: Double,
+        val cgst: Double,
+        val sgst: Double,
+        val igst: Double,
+        val roundOff: Double,
+        val netAmount: Double,
+        val totalTaxAmount: Double
+    )
+
+    data class InvoiceTaxSummary(
+        val hsnCode: String,
+        val taxableValue: Double,
+        val cgstRate: Double,
+        val cgstAmount: Double,
+        val sgstRate: Double,
+        val sgstAmount: Double,
+        val igstRate: Double,
+        val igstAmount: Double,
+        val totalTaxAmount: Double
+    )
+
+    data class InvoicePaymentSnapshot(
+        val modeLabel: String,
+        val previousDue: Double,
+        val currentInvoiceAmount: Double,
+        val advanceReceived: Double,
+        val partPaymentReceived: Double,
+        val balanceDue: Double,
+        val outstandingAmount: Double,
+        val dueDateLabel: String,
+        val summaryLabel: String
+    )
+
+    data class InvoiceDocument(
+        val voucherId: String,
+        val financialYearCode: String,
+        val invoiceNumber: String,
+        val displayTitle: String,
+        val issuedAtLabel: String,
+        val dueDateLabel: String,
+        val business: BusinessProfile,
+        val buyer: Party?,
+        val voucher: Voucher,
+        val items: List<VoucherItem>,
+        val additionalCharges: List<AdditionalCharge>,
+        val paymentSnapshot: InvoicePaymentSnapshot,
+        val totals: InvoiceTotals,
+        val taxSummary: List<InvoiceTaxSummary>,
+        val amountInWords: String,
+        val taxAmountInWords: String
+    )
+
+    data class InvoiceRenderBundle(
+        val document: InvoiceDocument,
+        val html: String,
+        val exportFileName: String,
+        val cacheKey: String
+    )
+
+    private val invoiceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val invoiceDateFormat = SimpleDateFormat("dd-MMM-yy", Locale.ENGLISH)
+    private val pdfResolution = PrintAttributes.Resolution("zerobook", "zerobook", 300, 300)
+    private val decimalFormat = DecimalFormat("#,##0.00")
     private val ones = arrayOf(
         "", "One", "Two", "Three", "Four", "Five",
         "Six", "Seven", "Eight", "Nine", "Ten",
@@ -66,10 +130,6 @@ object InvoiceGenerator {
         "", "", "Twenty", "Thirty", "Forty", "Fifty",
         "Sixty", "Seventy", "Eighty", "Ninety"
     )
-
-    private val invoiceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val voucherExtrasCache = mutableMapOf<String, VoucherRenderExtras>()
-    private val invoiceDateFormat = SimpleDateFormat("dd-MMM-yy", Locale.ENGLISH)
 
     fun parseAdditionalCharges(json: String?): List<AdditionalCharge> {
         if (json.isNullOrBlank()) return emptyList()
@@ -107,28 +167,7 @@ object InvoiceGenerator {
     }
 
     fun primeVoucherRenderExtras(context: Context, voucherId: String) {
-        val db = AppDatabase.getDatabase(context)
-        val cursor = db.openHelper.readableDatabase.query(
-            """
-            SELECT payment_mode, partial_amount_paid, partial_payment_submode, credit_due_date,
-                   remaining_credit_amount, is_advance, advance_for
-            FROM vouchers WHERE id = ?
-            """.trimIndent(),
-            arrayOf(voucherId)
-        )
-        cursor.use {
-            if (it.moveToFirst()) {
-                voucherExtrasCache[voucherId] = VoucherRenderExtras(
-                    paymentModeValue = it.getString(0).orEmpty(),
-                    partialAmountPaid = it.getDouble(1),
-                    partialPaymentSubmode = it.getString(2).orEmpty(),
-                    creditDueDate = it.getString(3).orEmpty(),
-                    remainingCreditAmount = it.getDouble(4),
-                    isAdvance = it.getInt(5) == 1,
-                    advanceFor = it.getString(6).orEmpty()
-                )
-            }
-        }
+        // Intentionally retained as a no-op compatibility method.
     }
 
     suspend fun loadInvoiceDocumentData(
@@ -141,13 +180,32 @@ object InvoiceGenerator {
         val items = db.voucherItemDao().getItemsForVoucherSync(voucherId)
         val party = voucher.partyId?.let { db.partyDao().getPartyById(it) }
         val charges = parseAdditionalCharges(voucher.additionalChargesJson)
-        primeVoucherRenderExtras(context, voucherId)
+        val extras = loadVoucherExtras(db, voucherId)
         return InvoiceDocumentData(
             voucher = voucher,
             items = items,
             charges = charges,
             profile = profile,
-            party = party
+            party = party,
+            extras = extras
+        )
+    }
+
+    suspend fun buildRenderBundle(
+        context: Context,
+        voucherId: String
+    ): InvoiceRenderBundle? {
+        val documentData = loadInvoiceDocumentData(context, voucherId) ?: return null
+        val document = buildInvoiceDocument(documentData)
+        validateInvoiceDocument(document)
+        val html = buildInvoiceHtml(document)
+        val fileName = "${buildInvoiceFileStem(document)}.pdf"
+        val cacheKey = sha256("${document.voucherId}|${document.invoiceNumber}|$html")
+        return InvoiceRenderBundle(
+            document = document,
+            html = html,
+            exportFileName = fileName,
+            cacheKey = cacheKey
         )
     }
 
@@ -159,620 +217,117 @@ object InvoiceGenerator {
         additionalCharges: List<AdditionalCharge> = emptyList(),
         qrBase64: String? = null
     ): String {
-        val resolvedParty = party ?: Party(
-            id = "",
-            name = "Walk-in Customer",
-            type = "CUSTOMER",
-            phone = "",
-            email = "",
-            address = "",
-            city = "",
-            state = business.state,
-            stateCode = business.stateCode,
-            pin = "",
-            gstin = null,
-            pan = null,
-            openingBalance = 0.0,
-            balanceType = "DR"
+        val totals = InvoiceTotals(
+            totalQuantity = items.sumOf { it.qty },
+            taxableAmount = voucher.taxableAmount,
+            cgst = voucher.cgst,
+            sgst = voucher.sgst,
+            igst = voucher.igst,
+            roundOff = voucher.roundOff,
+            netAmount = voucher.netAmount,
+            totalTaxAmount = voucher.cgst + voucher.sgst + voucher.igst
         )
-        val extras = voucherExtrasCache[voucher.id] ?: VoucherRenderExtras(paymentModeValue = voucher.paymentMode)
-        return buildInvoiceHtmlInternal(
+        val paymentSnapshot = InvoicePaymentSnapshot(
+            modeLabel = voucher.paymentMode,
+            previousDue = 0.0,
+            currentInvoiceAmount = voucher.netAmount,
+            advanceReceived = 0.0,
+            partPaymentReceived = 0.0,
+            balanceDue = voucher.outstandingAmount,
+            outstandingAmount = voucher.outstandingAmount,
+            dueDateLabel = "",
+            summaryLabel = voucher.paymentMode
+        )
+        val document = InvoiceDocument(
+            voucherId = voucher.id,
+            financialYearCode = voucher.financialYearCode,
+            invoiceNumber = voucher.voucherNo,
+            displayTitle = if (voucher.documentType.equals("PROFORMA", ignoreCase = true)) "PROFORMA INVOICE" else "TAX INVOICE",
+            issuedAtLabel = invoiceDateFormat.format(Date(voucher.date)),
+            dueDateLabel = "",
+            business = business,
+            buyer = party,
             voucher = voucher,
             items = items,
-            business = business,
-            party = resolvedParty,
             additionalCharges = additionalCharges,
-            extras = extras
+            paymentSnapshot = paymentSnapshot,
+            totals = totals,
+            taxSummary = buildTaxSummary(items, voucher),
+            amountInWords = amountInWords(voucher.netAmount),
+            taxAmountInWords = amountInWords(totals.totalTaxAmount)
+        )
+        return buildInvoiceHtml(document)
+    }
+
+    fun generatePdfFromVoucherId(
+        context: Context,
+        voucherId: String,
+        onComplete: (File?, Voucher?) -> Unit
+    ) {
+        invoiceScope.launch {
+            val bundle = buildRenderBundle(context, voucherId)
+            if (bundle == null) {
+                withContext(Dispatchers.Main) { onComplete(null, null) }
+                return@launch
+            }
+            val pdfFile = runCatching {
+                renderBundleToPdf(context, bundle)
+            }.getOrNull()
+            withContext(Dispatchers.Main) {
+                onComplete(pdfFile, bundle.document.voucher)
+            }
+        }
+    }
+
+    suspend fun renderBundleToPdf(
+        context: Context,
+        bundle: InvoiceRenderBundle
+    ): File {
+        val cacheDir = File(context.cacheDir, "zerobook-invoice-render")
+        if (!cacheDir.exists()) cacheDir.mkdirs()
+        val pdfFile = File(cacheDir, "${bundle.cacheKey}.pdf")
+        if (pdfFile.exists()) {
+            pdfFile.delete()
+        }
+        renderHtmlToPdf(context, bundle.html, bundle.document.invoiceNumber, pdfFile)
+        validatePdfFile(pdfFile, bundle)
+        return pdfFile
+    }
+
+    suspend fun exportLatestPdf(
+        context: Context,
+        bundle: InvoiceRenderBundle
+    ): ExportStorageManager.ExportResult {
+        val pdfFile = renderBundleToPdf(context, bundle)
+        return ExportStorageManager.exportFile(
+            context = context,
+            sourceFile = pdfFile,
+            displayName = bundle.exportFileName,
+            mimeType = "application/pdf",
+            target = ExportTarget.Invoices
         )
     }
 
-    private fun buildInvoiceHtmlInternal(
-        voucher: Voucher,
-        items: List<VoucherItem>,
-        business: BusinessProfile,
-        party: Party,
-        additionalCharges: List<AdditionalCharge>,
-        extras: VoucherRenderExtras
-    ): String {
-        val totalQty = items.sumOf { it.qty }
-        val qtyUnit = items.firstOrNull()?.unit.orEmpty()
-        val totalGst = voucher.cgst + voucher.sgst + voucher.igst
-        val showGst = business.gstin.isNotBlank() && totalGst > 0.0
-        val isIntrastate = !voucher.isIgst && party.stateCode.isNotBlank() && party.stateCode == business.stateCode
-        val isProforma = voucher.documentType.equals("PROFORMA", ignoreCase = true) ||
-            voucher.type.equals("PROFORMA", ignoreCase = true)
-        val invoiceHeading = when {
-            isProforma -> "PROFORMA INVOICE"
-            business.gstin.isNotBlank() -> "TAX INVOICE"
-            else -> "INVOICE"
-        }
-
-        val normalizedPaymentMode = when {
-            extras.isAdvance -> "ADVANCE"
-            else -> (extras.paymentModeValue.ifBlank { voucher.paymentMode })
-                .replace("_", " ")
-                .trim()
-                .uppercase(Locale.ENGLISH)
-        }
-
-        val narrationLines = buildList {
-            if (business.termsAndConditions.isNotBlank()) {
-                add(escapeHtml(business.termsAndConditions).replace("\n", "<br/>"))
+    suspend fun printBundle(
+        context: Context,
+        bundle: InvoiceRenderBundle
+    ) {
+        withContext(Dispatchers.Main) {
+            val webView = createConfiguredWebView(context)
+            try {
+                loadHtmlIntoWebView(webView, bundle.html)
+                val printManager = context.getSystemService(Context.PRINT_SERVICE) as PrintManager
+                val printAdapter = webView.createPrintDocumentAdapter(bundle.document.invoiceNumber)
+                val attributes = buildPrintAttributes()
+                printManager.print(bundle.document.invoiceNumber, printAdapter, attributes)
+            } finally {
+                webView.destroy()
             }
-            if (voucher.narration.isNotBlank() && voucher.narration != business.termsAndConditions) {
-                add(escapeHtml(voucher.narration).replace("\n", "<br/>"))
-            }
-        }
-        val declarationHtml = if (narrationLines.isEmpty()) {
-            ""
-        } else {
-            """
-            <div style='margin-top:8px;'>
-              <div style='font-weight:bold;font-size:9px;'>Declaration</div>
-              <div style='font-size:9px;line-height:1.5;color:#333333;margin-top:2px;'>
-                TERMS &amp; CONDITIONS<br/>
-                ${narrationLines.joinToString("<br/>")}
-              </div>
-            </div>
-            """.trimIndent()
-        }
-
-        val logoHtml = if (business.logoPath?.isNotBlank() == true && File(business.logoPath).exists()) {
-            "<img src='${toFileUrl(business.logoPath)}' style='max-height:65px;max-width:120px;object-fit:contain;display:block;'/>"
-        } else {
-            ""
-        }
-        val signatureHtml = if (business.signaturePath?.isNotBlank() == true && File(business.signaturePath).exists()) {
-            """
-            <div style='margin:8px 0 4px 0;'>
-              <img src='${toFileUrl(business.signaturePath)}'
-                   style='max-height:55px;max-width:160px;object-fit:contain;display:block;margin-left:auto;'/>
-            </div>
-            """.trimIndent()
-        } else {
-            "<div style='height:55px;'></div>"
-        }
-
-        val sellerLines = buildList {
-            if (business.address.isNotBlank()) add(escapeHtml(business.address).replace("\n", "<br/>"))
-            if (business.phone.isNotBlank()) add("Ph : ${escapeHtml(business.phone)}")
-            if (business.gstin.isNotBlank()) add("GSTIN/UIN: ${escapeHtml(business.gstin)}")
-            if (business.state.isNotBlank()) add("State Name : ${escapeHtml(business.state)}, Code : ${escapeHtml(business.stateCode)}")
-            if (business.email.isNotBlank()) add("E-Mail : ${escapeHtml(business.email)}")
-            if (business.pan.isNotBlank()) add("PAN: ${escapeHtml(business.pan)}")
-        }.joinToString("<br/>")
-
-        val buyerCityPin = listOfNotNull(
-            party.city.takeIf { it.isNotBlank() }?.let(::escapeHtml),
-            party.pin.takeIf { it.isNotBlank() }?.let(::escapeHtml)
-        ).joinToString(" - ")
-        val buyerLines = buildList {
-            if (party.address.isNotBlank()) add(escapeHtml(party.address).replace("\n", "<br/>"))
-            if (buyerCityPin.isNotBlank()) add(buyerCityPin)
-            if (!party.pan.isNullOrBlank()) add("PAN: ${escapeHtml(party.pan!!)}")
-            if (!party.gstin.isNullOrBlank()) add("GSTIN: ${escapeHtml(party.gstin!!)}")
-            if (party.state.isNotBlank()) add("State Name : ${escapeHtml(party.state)}, Code : ${escapeHtml(party.stateCode)}")
-            if (party.state.isNotBlank()) add("Place of Supply   : ${escapeHtml(party.state)}")
-        }.joinToString("<br/>")
-
-        val paymentTermsHtml = buildPaymentTermsHtml(
-            voucher = voucher,
-            extras = extras,
-            normalizedPaymentMode = normalizedPaymentMode
-        )
-
-        val transportRows = buildList<Pair<String, String>> {
-            if (voucher.transporterName.isNotBlank()) add("Transporter" to voucher.transporterName)
-            if (voucher.vehicleNo.isNotBlank()) add("Vehicle No." to voucher.vehicleNo)
-            if (voucher.lrNo.isNotBlank()) add("LR/GR No." to voucher.lrNo)
-            if (voucher.destination.isNotBlank()) add("Destination" to voucher.destination)
-        }.joinToString("") { (label, value) ->
-            """
-            <tr>
-              <td style='border:none;border-bottom:1px solid #cccccc;padding:4px;'>
-                <div style='font-size:9px;color:#555;'>$label</div>
-                <div style='font-weight:bold;'>${escapeHtml(value)}</div>
-              </td>
-            </tr>
-            """.trimIndent()
-        }
-
-        val itemRows = items.mapIndexed { index, item ->
-            val rowBg = if (index % 2 == 0) "#ffffff" else "#fafafa"
-            """
-            <tr style='background:$rowBg;'>
-              <td align='center'>${index + 1}</td>
-              <td><strong>${escapeHtml(item.productName)}</strong></td>
-              <td align='center'>${if (item.hsnCode.isBlank()) "" else escapeHtml(item.hsnCode)}</td>
-              <td align='center'>${formatQty(item.qty)} ${escapeHtml(item.unit)}</td>
-              <td align='right'>${formatMoney(item.rate)}</td>
-              <td align='center'>${escapeHtml(item.unit)}</td>
-              <td align='right'>${formatMoney(item.taxableAmount)}</td>
-            </tr>
-            """.trimIndent()
-        }.joinToString("")
-
-        val additionalChargeRows = additionalCharges.joinToString("") { charge ->
-            """
-            <tr>
-              <td></td>
-              <td colspan='5' align='right'><em><strong>${escapeHtml(charge.label)}</strong></em></td>
-              <td align='right'>${formatMoney(charge.amount)}</td>
-            </tr>
-            """.trimIndent()
-        }
-
-        val taxSummaryRows = buildString {
-            if (showGst && voucher.cgst > 0.0 && isIntrastate) {
-                append(
-                    """
-                    <tr>
-                      <td></td>
-                      <td colspan='5' align='right'><em><strong>OUTPUT CGST</strong></em></td>
-                      <td align='right'>${formatMoney(voucher.cgst)}</td>
-                    </tr>
-                    """.trimIndent()
-                )
-            }
-            if (showGst && voucher.sgst > 0.0 && isIntrastate) {
-                append(
-                    """
-                    <tr>
-                      <td></td>
-                      <td colspan='5' align='right'><em><strong>OUTPUT SGST</strong></em></td>
-                      <td align='right'>${formatMoney(voucher.sgst)}</td>
-                    </tr>
-                    """.trimIndent()
-                )
-            }
-            if (showGst && voucher.igst > 0.0 && !isIntrastate) {
-                append(
-                    """
-                    <tr>
-                      <td></td>
-                      <td colspan='5' align='right'><em><strong>OUTPUT IGST</strong></em></td>
-                      <td align='right'>${formatMoney(voucher.igst)}</td>
-                    </tr>
-                    """.trimIndent()
-                )
-            }
-            if (abs(voucher.roundOff) > 0.0) {
-                append(
-                    """
-                    <tr>
-                      <td></td>
-                      <td colspan='5' align='right'><em><strong>ROUND OFF (S)</strong></em></td>
-                      <td align='right'>${formatSignedMoney(voucher.roundOff)}</td>
-                    </tr>
-                    """.trimIndent()
-                )
-            }
-        }
-
-        val spacerRows = (1..8).joinToString("") {
-            """
-            <tr style='height:22px;'>
-              <td style='border-left:1px solid #000;border-right:1px solid #000;border-top:none;border-bottom:none;'></td>
-              <td style='border-left:1px solid #000;border-right:1px solid #000;border-top:none;border-bottom:none;'></td>
-              <td style='border-left:1px solid #000;border-right:1px solid #000;border-top:none;border-bottom:none;'></td>
-              <td style='border-left:1px solid #000;border-right:1px solid #000;border-top:none;border-bottom:none;'></td>
-              <td style='border-left:1px solid #000;border-right:1px solid #000;border-top:none;border-bottom:none;'></td>
-              <td style='border-left:1px solid #000;border-right:1px solid #000;border-top:none;border-bottom:none;'></td>
-              <td style='border-left:1px solid #000;border-right:1px solid #000;border-top:none;border-bottom:none;'></td>
-            </tr>
-            """.trimIndent()
-        }
-
-        val paymentSummaryBox = buildPaymentSummarySection(
-            voucher = voucher,
-            extras = extras,
-            normalizedPaymentMode = normalizedPaymentMode
-        )
-
-        val gstBreakupSection = if (showGst) {
-            buildGstBreakupSection(items, voucher, isIntrastate)
-        } else {
-            ""
-        }
-
-        val bankRows = buildList<String> {
-            if (business.bankName.isNotBlank()) add(bankDetailRow("Bank Name", business.bankName))
-            if (business.accountNo.isNotBlank()) add(bankDetailRow("A/c No.", business.accountNo))
-            if (business.ifsc.isNotBlank()) add(bankDetailRow("IFS Code", business.ifsc))
-            if (business.branchName.isNotBlank()) add(bankDetailRow("Branch", business.branchName))
-        }.joinToString("")
-
-        val bankSection = if (bankRows.isBlank()) {
-            ""
-        } else {
-            """
-            <div style='font-weight:bold;font-size:10px;margin-bottom:4px;'>Company's Bank Details</div>
-            <table style='border:none;font-size:10px;border-collapse:collapse;width:auto;'>
-              $bankRows
-            </table>
-            """.trimIndent()
-        }
-
-        val amountWords = amountInWords(voucher.netAmount)
-            .removePrefix("Rupees ")
-            .removeSuffix(" Only")
-            .trim()
-
-        return """
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <meta charset='UTF-8'/>
-          <meta name='viewport' content='width=device-width, initial-scale=1.0'/>
-          <style>
-            body { font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #000000; background: #FFFFFF; margin: 0; }
-            .page { width: 100%; padding: 20px 24px; background: #FFFFFF; }
-            table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-            td, th { border: 1px solid #000000; padding: 3px 5px; vertical-align: top; }
-            .header-gray { background: #f0f0f0; font-weight: bold; font-size: 10px; }
-          </style>
-        </head>
-        <body>
-          <div class='page'>
-            <div style='text-align:center;font-weight:bold;font-size:14px;letter-spacing:2px;margin-bottom:8px;'>$invoiceHeading</div>
-
-            <table>
-              <tr>
-                <td style='width:60%;border-right:2px solid #000000;'>
-                  <table style='border:none;width:100%;'>
-                    <tr>
-                      <td style='width:95px;border:none;vertical-align:middle;'>$logoHtml</td>
-                      <td style='border:none;padding-left:8px;vertical-align:middle;'>
-                        <div style='font-size:14px;font-weight:bold;'>${escapeHtml(business.businessName)}</div>
-                      </td>
-                    </tr>
-                  </table>
-                  <div style='line-height:1.8;font-size:11px;'>$sellerLines</div>
-                  <div style='border-top:1px solid #000000;margin-top:8px;margin-bottom:6px;'></div>
-                  <div style='font-size:9px;color:#555555;'>Buyer (Bill to)</div>
-                  <div style='font-weight:bold;font-size:12px;margin-top:3px;margin-bottom:4px;'>${escapeHtml(party.name)}</div>
-                  <div style='line-height:1.8;font-size:11px;'>$buyerLines</div>
-                </td>
-                <td style='width:40%;padding:0;'>
-                  <table style='border:none;width:100%;'>
-                    <tr>
-                      <td style='border:none;border-bottom:1px solid #cccccc;padding:4px;'>
-                        <div style='display:flex;'>
-                          <div style='width:50%;'>
-                            <div style='font-size:9px;color:#555;'>Invoice No.</div>
-                            <div style='font-weight:bold;'>${escapeHtml(voucher.voucherNo)}</div>
-                          </div>
-                          <div style='width:50%;border-left:1px solid #cccccc;padding-left:6px;'>
-                            <div style='font-size:9px;color:#555;'>Dated</div>
-                            <div style='font-weight:bold;'>${invoiceDateFormat.format(Date(voucher.date))}</div>
-                          </div>
-                        </div>
-                      </td>
-                    </tr>
-                    <tr>
-                      <td style='border:none;border-bottom:1px solid #cccccc;padding:4px;'>
-                        <div style='font-size:9px;color:#555;'>Mode/Terms of Payment</div>
-                        $paymentTermsHtml
-                      </td>
-                    </tr>
-                    <tr>
-                      <td style='border:none;border-bottom:1px solid #cccccc;padding:4px;'>
-                        <div style='font-size:9px;color:#555;'>Reference No. &amp; Date</div>
-                        <div>${escapeHtml(voucher.referenceNo)}</div>
-                      </td>
-                    </tr>
-                    <tr>
-                      <td style='border:none;border-bottom:1px solid #cccccc;padding:4px;'>
-                        <div style='font-size:9px;color:#555;'>Buyer's Order No.</div>
-                        <div>${escapeHtml(voucher.buyerOrderNo)}</div>
-                      </td>
-                    </tr>
-                    <tr>
-                      <td style='border:none;border-bottom:${if (transportRows.isBlank()) "none" else "1px solid #cccccc"};padding:4px;'>
-                        <div style='font-size:9px;color:#555;'>Terms of Delivery</div>
-                        <div>${escapeHtml(voucher.termsOfDelivery)}</div>
-                      </td>
-                    </tr>
-                    $transportRows
-                  </table>
-                </td>
-              </tr>
-            </table>
-
-            <table>
-              <tr class='header-gray'>
-                <th width='4%' align='center'>Sl<br/>No.</th>
-                <th width='35%' align='center'>Description of Goods</th>
-                <th width='10%' align='center'>HSN/SAC</th>
-                <th width='13%' align='center'>Quantity</th>
-                <th width='9%' align='right'>Rate</th>
-                <th width='6%' align='center'>per</th>
-                <th width='13%' align='right'>Amount</th>
-              </tr>
-              $itemRows
-              $additionalChargeRows
-              $taxSummaryRows
-              $spacerRows
-              <tr style='font-weight:bold;background:#f5f5f5;'>
-                <td></td>
-                <td><strong>Total</strong></td>
-                <td></td>
-                <td align='center'><strong>${formatQty(totalQty)} ${escapeHtml(qtyUnit)}</strong></td>
-                <td></td>
-                <td></td>
-                <td align='right'><strong>${formatMoney(voucher.netAmount)}</strong></td>
-              </tr>
-            </table>
-
-            <table>
-              <tr>
-                <td style='width:72%;border:1px solid #000000;padding:5px 6px;'>
-                  <div style='font-size:9px;color:#555;'>Amount Chargeable (in words)</div>
-                  <div style='font-weight:bold;font-size:11px;'>Indian Rupees $amountWords Only</div>
-                </td>
-                <td style='width:28%;border:1px solid #000000;padding:5px 6px;text-align:right;vertical-align:bottom;'>
-                  <em style='font-size:9px;'>E. &amp; O.E</em>
-                </td>
-              </tr>
-            </table>
-
-            $paymentSummaryBox
-
-            $gstBreakupSection
-
-            <table style='margin-top:0;'>
-              <tr>
-                <td style='width:55%;border:1px solid #000000;vertical-align:top;padding:8px;'>
-                  $bankSection
-                  $declarationHtml
-                </td>
-                <td style='width:5%;border:none;'></td>
-                <td style='width:40%;border:1px solid #000000;vertical-align:bottom;text-align:right;padding:8px;'>
-                  <div style='font-weight:bold;font-size:10px;'>for ${escapeHtml(business.businessName)}</div>
-                  $signatureHtml
-                  <hr style='border:none;border-top:1px solid #000000;margin:4px 0;'/>
-                  <div style='font-size:9px;'>Authorised Signatory</div>
-                </td>
-              </tr>
-            </table>
-
-            <p style='text-align:center;font-size:10px;color:#666666;margin-top:10px;'>${escapeHtml(business.city)}</p>
-          </div>
-        </body>
-        </html>
-        """.trimIndent()
-    }
-
-    private fun buildPaymentTermsHtml(
-        voucher: Voucher,
-        extras: VoucherRenderExtras,
-        normalizedPaymentMode: String
-    ): String {
-        val chequeDateText = voucher.chequeDate?.let { invoiceDateFormat.format(Date(it)) }.orEmpty()
-        val dueDateText = extras.creditDueDate.takeIf { it.isNotBlank() }?.let(::formatDueDateText).orEmpty()
-        return when (normalizedPaymentMode) {
-            "CASH" -> "<div style='font-weight:bold;'>Cash</div>"
-            "BANK" -> "<div style='font-weight:bold;'>Bank Transfer</div>"
-            "UPI" -> "<div style='font-weight:bold;'>UPI</div>"
-            "CHEQUE" -> buildString {
-                append("<div style='font-weight:bold;'>Cheque</div>")
-                if (!voucher.chequeNo.isNullOrBlank()) {
-                    append("<div style='font-size:9px;'>Cheque No: ${escapeHtml(voucher.chequeNo!!)}")
-                    if (chequeDateText.isNotBlank()) {
-                        append(" dated $chequeDateText")
-                    }
-                    append("</div>")
-                }
-            }
-            "PART PAYMENT" -> buildString {
-                append("<div style='font-weight:bold;'>Part Payment</div>")
-                append("<div style='font-size:9px;color:#333;'>Paid: &#8377;${formatMoney(extras.partialAmountPaid)} via ${escapeHtml(extras.partialPaymentSubmode.ifBlank { "CASH" })}</div>")
-                append("<div style='font-size:9px;color:#333;'>Balance Due: &#8377;${formatMoney(extras.remainingCreditAmount)}")
-                if (dueDateText.isNotBlank()) {
-                    append(" $dueDateText")
-                }
-                append("</div>")
-            }
-            "CREDIT" -> buildString {
-                append("<div style='font-weight:bold;'>Credit</div>")
-                append("<div style='font-size:9px;color:#333;'>Full amount on credit</div>")
-                append("<div style='font-size:9px;color:#333;'>Due: ${if (dueDateText.isBlank()) "No due date" else dueDateText}</div>")
-            }
-            "ADVANCE" -> buildString {
-                append("<div style='font-weight:bold;'>Advance Receipt</div>")
-                append("<div style='font-size:9px;color:#333;'>Advance amount: &#8377;${formatMoney(voucher.netAmount)}</div>")
-            }
-            else -> "<div style='font-weight:bold;'>${escapeHtml(normalizedPaymentMode)}</div>"
         }
     }
 
-    private fun buildPaymentSummarySection(
-        voucher: Voucher,
-        extras: VoucherRenderExtras,
-        normalizedPaymentMode: String
-    ): String {
-        return when (normalizedPaymentMode) {
-            "PART PAYMENT" -> {
-                val dueDateText = extras.creditDueDate.takeIf { it.isNotBlank() }?.let(::formatDueDateText).orEmpty()
-                """
-                <table style='width:100%;border-collapse:collapse;margin-top:0;'>
-                  <tr>
-                    <td colspan='2' style='background:#f8f8f8;font-weight:bold;font-size:10px;border:1px solid #000000;padding:4px 6px;'>Payment Summary</td>
-                  </tr>
-                  <tr>
-                    <td style='border:1px solid #000000;padding:3px 6px;width:60%;'>Invoice Total</td>
-                    <td style='border:1px solid #000000;padding:3px 6px;text-align:right;font-weight:bold;'>&#8377;${formatMoney(voucher.netAmount)}</td>
-                  </tr>
-                  <tr>
-                    <td style='border:1px solid #000000;padding:3px 6px;'>Amount Paid (via ${escapeHtml(extras.partialPaymentSubmode.ifBlank { "CASH" })})</td>
-                    <td style='border:1px solid #000000;padding:3px 6px;text-align:right;'>&#8377;${formatMoney(extras.partialAmountPaid)}</td>
-                  </tr>
-                  <tr>
-                    <td style='border:1px solid #000000;padding:3px 6px;font-weight:bold;'>Balance Due</td>
-                    <td style='border:1px solid #000000;padding:3px 6px;text-align:right;font-weight:bold;'>&#8377;${formatMoney(extras.remainingCreditAmount)}</td>
-                  </tr>
-                  ${
-                    if (dueDateText.isBlank()) ""
-                    else """
-                    <tr>
-                      <td style='border:1px solid #000000;padding:3px 6px;font-size:9px;color:#555;'>Due Date</td>
-                      <td style='border:1px solid #000000;padding:3px 6px;font-size:9px;text-align:right;'>$dueDateText</td>
-                    </tr>
-                    """.trimIndent()
-                  }
-                </table>
-                """.trimIndent()
-            }
-            "ADVANCE" -> {
-                val advanceMode = extras.partialPaymentSubmode.ifBlank { voucher.paymentMode.ifBlank { "Advance" } }
-                """
-                <table style='width:100%;border-collapse:collapse;margin-top:0;'>
-                  <tr>
-                    <td colspan='2' style='background:#f8f8f8;font-weight:bold;font-size:10px;border:1px solid #000000;padding:4px 6px;'>Advance Receipt Summary</td>
-                  </tr>
-                  <tr>
-                    <td style='border:1px solid #000000;padding:3px 6px;'>Advance Received</td>
-                    <td style='border:1px solid #000000;padding:3px 6px;text-align:right;font-weight:bold;'>&#8377;${formatMoney(voucher.netAmount)}</td>
-                  </tr>
-                  <tr>
-                    <td style='border:1px solid #000000;padding:3px 6px;'>Payment Mode</td>
-                    <td style='border:1px solid #000000;padding:3px 6px;text-align:right;'>${escapeHtml(advanceMode)}</td>
-                  </tr>
-                  <tr>
-                    <td style='border:1px solid #000000;padding:3px 6px;font-size:9px;color:#555;'>This is an advance receipt for future goods or services.</td>
-                    <td style='border:1px solid #000000;padding:3px 6px;'></td>
-                  </tr>
-                </table>
-                """.trimIndent()
-            }
-            else -> ""
-        }
-    }
-
-    private fun buildGstBreakupSection(
-        items: List<VoucherItem>,
-        voucher: Voucher,
-        isIntrastate: Boolean
-    ): String {
-        val groupedRows = items
-            .groupBy { "${it.hsnCode}|${it.gstRate}" }
-            .entries
-            .sortedBy { it.value.firstOrNull()?.gstRate ?: 0.0 }
-            .joinToString("") { (_, groupedItems) ->
-                val first = groupedItems.first()
-                val taxable = groupedItems.sumOf { it.taxableAmount }
-                val cgst = groupedItems.sumOf { it.cgstAmount }
-                val sgst = groupedItems.sumOf { it.sgstAmount }
-                val igst = groupedItems.sumOf { it.igstAmount }
-                val halfRate = first.gstRate / 2.0
-                """
-                <tr>
-                  <td style='border:1px solid #000000;padding:4px;'>${escapeHtml(first.hsnCode)}</td>
-                  <td style='border:1px solid #000000;padding:4px;text-align:right;'>${formatMoney(taxable)}</td>
-                  <td style='border:1px solid #000000;padding:4px;text-align:center;'>${if (isIntrastate) "${formatTaxRate(halfRate)}%" else ""}</td>
-                  <td style='border:1px solid #000000;padding:4px;text-align:right;'>${if (isIntrastate) formatMoney(cgst) else ""}</td>
-                  <td style='border:1px solid #000000;padding:4px;text-align:center;'>${if (isIntrastate) "${formatTaxRate(halfRate)}%" else ""}</td>
-                  <td style='border:1px solid #000000;padding:4px;text-align:right;'>${if (isIntrastate) formatMoney(sgst) else ""}</td>
-                  <td style='border:1px solid #000000;padding:4px;text-align:center;'>${if (!isIntrastate) "${formatTaxRate(first.gstRate)}%" else ""}</td>
-                  <td style='border:1px solid #000000;padding:4px;text-align:right;'>${if (!isIntrastate) formatMoney(igst) else ""}</td>
-                  <td style='border:1px solid #000000;padding:4px;text-align:right;'>${formatMoney(cgst + sgst + igst)}</td>
-                </tr>
-                """.trimIndent()
-            }
-
-        val taxWords = amountInWords(voucher.cgst + voucher.sgst + voucher.igst)
-            .removePrefix("Rupees ")
-            .removeSuffix(" Only")
-            .trim()
-
-        return """
-        <table style='width:100%;border-collapse:collapse;'>
-          <tr>
-            <th rowspan='2' style='background:#e8e8e8;font-weight:bold;font-size:10px;border:1px solid #000000;padding:4px;'>HSN/SAC</th>
-            <th rowspan='2' style='background:#e8e8e8;font-weight:bold;font-size:10px;border:1px solid #000000;padding:4px;'>Taxable Value</th>
-            <th colspan='2' style='background:#e8e8e8;font-weight:bold;font-size:10px;border:1px solid #000000;padding:4px;'>CGST</th>
-            <th colspan='2' style='background:#e8e8e8;font-weight:bold;font-size:10px;border:1px solid #000000;padding:4px;'>SGST/UTGST</th>
-            <th colspan='2' style='background:#e8e8e8;font-weight:bold;font-size:10px;border:1px solid #000000;padding:4px;'>IGST</th>
-            <th rowspan='2' style='background:#e8e8e8;font-weight:bold;font-size:10px;border:1px solid #000000;padding:4px;'>Total Tax Amount</th>
-          </tr>
-          <tr>
-            <th style='background:#e8e8e8;font-weight:bold;font-size:10px;border:1px solid #000000;padding:4px;'>Rate</th>
-            <th style='background:#e8e8e8;font-weight:bold;font-size:10px;border:1px solid #000000;padding:4px;'>Amount</th>
-            <th style='background:#e8e8e8;font-weight:bold;font-size:10px;border:1px solid #000000;padding:4px;'>Rate</th>
-            <th style='background:#e8e8e8;font-weight:bold;font-size:10px;border:1px solid #000000;padding:4px;'>Amount</th>
-            <th style='background:#e8e8e8;font-weight:bold;font-size:10px;border:1px solid #000000;padding:4px;'>Rate</th>
-            <th style='background:#e8e8e8;font-weight:bold;font-size:10px;border:1px solid #000000;padding:4px;'>Amount</th>
-          </tr>
-          $groupedRows
-          <tr style='font-weight:bold;background:#f0f0f0;'>
-            <td style='border:1px solid #000000;padding:4px;text-align:center;'>Total</td>
-            <td style='border:1px solid #000000;padding:4px;text-align:right;'>${formatMoney(voucher.taxableAmount)}</td>
-            <td style='border:1px solid #000000;padding:4px;'></td>
-            <td style='border:1px solid #000000;padding:4px;text-align:right;'>${formatMoney(voucher.cgst)}</td>
-            <td style='border:1px solid #000000;padding:4px;'></td>
-            <td style='border:1px solid #000000;padding:4px;text-align:right;'>${formatMoney(voucher.sgst)}</td>
-            <td style='border:1px solid #000000;padding:4px;'></td>
-            <td style='border:1px solid #000000;padding:4px;text-align:right;'>${formatMoney(voucher.igst)}</td>
-            <td style='border:1px solid #000000;padding:4px;text-align:right;'>${formatMoney(voucher.cgst + voucher.sgst + voucher.igst)}</td>
-          </tr>
-        </table>
-        <table>
-          <tr>
-            <td style='font-size:10px;padding:5px 6px;border:1px solid #000000;'>
-              <strong>Tax Amount (in words) : </strong>
-              Indian Rupees $taxWords Only
-            </td>
-          </tr>
-        </table>
-        """.trimIndent()
-    }
-
-    fun numToWords(n: Long): String {
-        if (n == 0L) return ""
-        return when {
-            n < 20 -> ones[n.toInt()] + " "
-            n < 100 -> tens[(n / 10).toInt()] + " " + numToWords(n % 10)
-            n < 1000 -> ones[(n / 100).toInt()] + " Hundred " + numToWords(n % 100)
-            n < 100000 -> numToWords(n / 1000) + "Thousand " + numToWords(n % 1000)
-            n < 10000000 -> numToWords(n / 100000) + "Lakh " + numToWords(n % 100000)
-            else -> numToWords(n / 10000000) + "Crore " + numToWords(n % 10000000)
-        }
-    }
-
-    fun amountInWords(amount: Double): String {
-        val safeAmount = amount.coerceAtLeast(0.0)
-        val rupees = safeAmount.toLong()
-        val paise = ((safeAmount - rupees) * 100).roundToInt().coerceIn(0, 99)
-        var result = "Rupees " + (numToWords(rupees).trim().ifBlank { "Zero" })
-        if (paise > 0) {
-            result += " and " + numToWords(paise.toLong()).trim() + " Paise"
-        }
-        return result + " Only"
-    }
-
-    fun buildUpiDeepLink(upiId: String, businessName: String, amount: Double, voucherNo: String): String {
-        return generateUpiLink(upiId, businessName, amount, voucherNo)
-    }
+    fun buildUpiDeepLink(upiId: String, businessName: String, amount: Double, voucherNo: String): String =
+        generateUpiLink(upiId, businessName, amount, voucherNo)
 
     fun generateUpiLink(
         upiId: String,
@@ -788,109 +343,818 @@ object InvoiceGenerator {
     fun getQrHtml(upiLink: String, upiId: String): String {
         return if (upiId.isBlank()) "" else {
             """
-            <div style='text-align:center; padding:8px;'>
-              <div style='font-size:9px; color:#444;'>Scan &amp; Pay via UPI</div>
-              <div style='font-size:8px; margin-top:4px; color:#000; word-break:break-all;'>${escapeHtml(upiId)}</div>
+            <div style='display:flex;align-items:center;justify-content:center;width:96px;height:96px;border:1px dashed #777;color:#444;font-size:9px;text-align:center;'>
+              QR
             </div>
+            <div style='font-size:9px;color:#444;margin-top:4px;'>${escapeHtml(upiId)}</div>
             """.trimIndent()
         }
     }
 
     fun generateQrBase64(value: String, size: Int = 200): String? = null
 
-    fun generatePdfFromVoucherId(
-        context: Context,
-        voucherId: String,
-        onComplete: (File?, Voucher?) -> Unit
-    ) {
-        invoiceScope.launch {
-            val documentData = loadInvoiceDocumentData(context, voucherId)
-            if (documentData == null) {
-                withContext(Dispatchers.Main) { onComplete(null, null) }
-                return@launch
-            }
-            val html = buildInvoiceHtml(
-                voucher = documentData.voucher,
-                items = documentData.items,
-                business = documentData.profile,
-                party = documentData.party,
-                additionalCharges = documentData.charges
-            )
-            withContext(Dispatchers.Main) {
-                val webView = WebView(context)
-                configureInvoiceWebView(webView)
-                webView.webViewClient = object : WebViewClient() {
-                    override fun onPageFinished(view: WebView?, url: String?) {
-                        val targetView = view ?: run {
-                            onComplete(null, documentData.voucher)
-                            return
-                        }
-                        Handler(Looper.getMainLooper()).postDelayed({
-                            writePdfFromWebView(
-                                context = context,
-                                webView = targetView,
-                                voucherNo = documentData.voucher.voucherNo
-                            ) { file ->
-                                onComplete(file, documentData.voucher)
-                                targetView.destroy()
-                            }
-                        }, 500)
-                    }
+    private fun buildInvoiceDocument(source: InvoiceDocumentData): InvoiceDocument {
+        val taxSummary = buildTaxSummary(source.items, source.voucher)
+        val totals = InvoiceTotals(
+            totalQuantity = source.items.sumOf { it.qty },
+            taxableAmount = source.voucher.taxableAmount,
+            cgst = source.voucher.cgst,
+            sgst = source.voucher.sgst,
+            igst = source.voucher.igst,
+            roundOff = source.voucher.roundOff,
+            netAmount = source.voucher.netAmount,
+            totalTaxAmount = source.voucher.cgst + source.voucher.sgst + source.voucher.igst
+        )
+        val dueDateLabel = source.extras.creditDueDate.takeIf { it.isNotBlank() }?.let(::formatDueDateText).orEmpty()
+        val partPaymentReceived = source.extras.partialAmountPaid.coerceAtLeast(0.0)
+        val advanceReceived = if (source.extras.isAdvance) source.voucher.netAmount else 0.0
+        val paymentSnapshot = InvoicePaymentSnapshot(
+            modeLabel = resolvePaymentLabel(source.voucher, source.extras),
+            previousDue = 0.0,
+            currentInvoiceAmount = source.voucher.netAmount,
+            advanceReceived = advanceReceived,
+            partPaymentReceived = partPaymentReceived,
+            balanceDue = source.extras.remainingCreditAmount.coerceAtLeast(source.voucher.outstandingAmount).coerceAtLeast(0.0),
+            outstandingAmount = source.voucher.outstandingAmount.coerceAtLeast(0.0),
+            dueDateLabel = dueDateLabel,
+            summaryLabel = buildPaymentSummaryLabel(source.voucher, source.extras)
+        )
+        val title = when {
+            source.voucher.documentType.equals("PROFORMA", ignoreCase = true) -> "PROFORMA INVOICE"
+            source.extras.isAdvance && source.voucher.type == "RECEIPT" -> "ADVANCE RECEIPT"
+            source.voucher.type == "PURCHASE" -> "PURCHASE INVOICE"
+            source.voucher.type == "SALE_RETURN" -> "SALES RETURN"
+            source.voucher.type == "PURCHASE_RETURN" -> "PURCHASE RETURN"
+            source.voucher.type == "PAYMENT" && source.extras.isAdvance -> "ADVANCE PAYMENT"
+            else -> if (source.profile.gstin.isNotBlank()) "TAX INVOICE" else "INVOICE"
+        }
+        return InvoiceDocument(
+            voucherId = source.voucher.id,
+            financialYearCode = source.voucher.financialYearCode,
+            invoiceNumber = source.voucher.voucherNo,
+            displayTitle = title,
+            issuedAtLabel = invoiceDateFormat.format(Date(source.voucher.date)),
+            dueDateLabel = dueDateLabel,
+            business = source.profile,
+            buyer = source.party,
+            voucher = source.voucher,
+            items = source.items,
+            additionalCharges = source.charges,
+            paymentSnapshot = paymentSnapshot,
+            totals = totals,
+            taxSummary = taxSummary,
+            amountInWords = amountInWords(source.voucher.netAmount),
+            taxAmountInWords = amountInWords(totals.totalTaxAmount)
+        )
+    }
+
+    private suspend fun validateInvoiceDocument(document: InvoiceDocument) {
+        check(document.invoiceNumber.isNotBlank()) { "Invoice number is missing." }
+        check(document.business.businessName.isNotBlank()) { "Business name is missing." }
+        check(document.items.isNotEmpty() || document.voucher.type in setOf("RECEIPT", "PAYMENT")) { "Invoice line items are missing." }
+        val computedTaxable = document.items.sumOf { it.taxableAmount } + document.additionalCharges.sumOf { if (it.isTaxable) it.amount else 0.0 }
+        check(abs(computedTaxable - document.voucher.taxableAmount) < 1.0) { "Taxable amount validation failed." }
+        val computedNet = document.voucher.taxableAmount +
+            document.voucher.cgst +
+            document.voucher.sgst +
+            document.voucher.igst +
+            document.additionalCharges.sumOf { it.amount } +
+            document.voucher.roundOff
+        check(abs(computedNet - document.voucher.netAmount) < 1.0) { "Net amount validation failed." }
+        document.business.logoPath?.takeIf { it.isNotBlank() }?.let {
+            check(File(it).exists()) { "Business logo file not found." }
+        }
+    }
+
+    private fun buildInvoiceHtml(document: InvoiceDocument): String {
+        val business = document.business
+        val buyer = document.buyer
+        val voucher = document.voucher
+        val totals = document.totals
+        val showLogo = business.showLogo && !business.logoPath.isNullOrBlank() && File(business.logoPath!!).exists()
+        val showSignature = business.showSignature && !business.signaturePath.isNullOrBlank() && File(business.signaturePath!!).exists()
+        val isIntrastate = !voucher.isIgst && buyer?.stateCode == business.stateCode
+
+        val itemRows = document.items.mapIndexed { index, item ->
+            val description = buildString {
+                append(escapeHtml(item.productName))
+                if (item.discount > 0.0) {
+                    append("<div class='subtext'>Discount: ${escapeHtml(item.discountType)} ${formatMoney(item.discount)}</div>")
                 }
-                webView.loadDataWithBaseURL(
-                    "file:///",
-                    html,
-                    "text/html",
-                    "UTF-8",
-                    null
-                )
+            }
+            """
+            <tr>
+              <td class='center'>${index + 1}</td>
+              <td>$description</td>
+              <td class='center'>${escapeHtml(item.hsnCode)}</td>
+              <td class='right'>${formatQty(item.qty)}</td>
+              <td class='center'>${escapeHtml(item.unit)}</td>
+              <td class='right'>${formatMoney(item.rate)}</td>
+              <td class='right'>${formatMoney(item.taxableAmount)}</td>
+            </tr>
+            """.trimIndent()
+        }.joinToString("\n")
+
+        val adjustmentRows = buildList {
+            if (voucher.cgst > 0.0) add("CGST" to voucher.cgst)
+            if (voucher.sgst > 0.0) add("SGST" to voucher.sgst)
+            if (voucher.igst > 0.0) add("IGST" to voucher.igst)
+            document.additionalCharges.forEach { add(it.label.ifBlank { "Additional Charge" } to it.amount) }
+            if (abs(voucher.roundOff) > 0.0) add("Round Off" to voucher.roundOff)
+        }.joinToString("\n") { (label, amount) ->
+            """
+            <tr>
+              <td colspan='6' class='label-cell'>${escapeHtml(label)}</td>
+              <td class='right'>${formatSignedMoney(amount)}</td>
+            </tr>
+            """.trimIndent()
+        }
+
+        val taxRows = document.taxSummary.joinToString("\n") { summary ->
+            """
+            <tr>
+              <td>${escapeHtml(summary.hsnCode)}</td>
+              <td class='right'>${formatMoney(summary.taxableValue)}</td>
+              <td class='center'>${rateLabel(summary.cgstRate)}</td>
+              <td class='right'>${formatMoney(summary.cgstAmount)}</td>
+              <td class='center'>${rateLabel(summary.sgstRate)}</td>
+              <td class='right'>${formatMoney(summary.sgstAmount)}</td>
+              <td class='center'>${rateLabel(summary.igstRate)}</td>
+              <td class='right'>${formatMoney(summary.igstAmount)}</td>
+              <td class='right'>${formatMoney(summary.totalTaxAmount)}</td>
+            </tr>
+            """.trimIndent()
+        }
+
+        val transportRows = buildList {
+            if (voucher.transporterName.isNotBlank()) add("Transport" to voucher.transporterName)
+            if (voucher.vehicleNo.isNotBlank()) add("Vehicle No." to voucher.vehicleNo)
+            if (voucher.lrNo.isNotBlank()) add("LR / GR No." to voucher.lrNo)
+            if (voucher.destination.isNotBlank()) add("Destination" to voucher.destination)
+            if (voucher.referenceNo.isNotBlank()) add("Reference No." to voucher.referenceNo)
+            if (voucher.dispatchDocNo.isNotBlank()) add("Dispatch Doc" to voucher.dispatchDocNo)
+        }.joinToString("<br/>") { "${escapeHtml(it.first)}: <strong>${escapeHtml(it.second)}</strong>" }
+
+        val bankDetails = buildList {
+            if (business.bankName.isNotBlank()) add("Bank: ${escapeHtml(business.bankName)}")
+            if (business.accountNo.isNotBlank()) add("A/C No: ${escapeHtml(business.accountNo)}")
+            if (business.ifsc.isNotBlank()) add("IFSC: ${escapeHtml(business.ifsc)}")
+            if (business.branchName.isNotBlank()) add("Branch: ${escapeHtml(business.branchName)}")
+        }.joinToString("<br/>")
+
+        val qrSection = if (business.showUpiQr && business.upiId.isNotBlank()) {
+            val upiLink = generateUpiLink(business.upiId, business.businessName, totals.netAmount, document.invoiceNumber)
+            """
+            <div class='payment-box'>
+              <div class='section-title'>QR / UPI</div>
+              ${getQrHtml(upiLink, business.upiId)}
+            </div>
+            """.trimIndent()
+        } else {
+            ""
+        }
+
+        return """
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset='UTF-8'/>
+          <meta name='viewport' content='width=device-width, initial-scale=1.0'/>
+          <style>
+            @page { size: A4; margin: 10mm; }
+            * { box-sizing: border-box; }
+            body {
+              margin: 0;
+              background: #f3f4f7;
+              color: #111827;
+              font-family: Arial, Helvetica, sans-serif;
+              -webkit-print-color-adjust: exact;
+              print-color-adjust: exact;
+            }
+            .sheet {
+              width: 210mm;
+              min-height: 297mm;
+              margin: 0 auto;
+              padding: 9mm;
+              background: #ffffff;
+            }
+            .title {
+              text-align: center;
+              font-size: 17px;
+              font-weight: 700;
+              letter-spacing: 0.05em;
+              margin-bottom: 8px;
+            }
+            .frame {
+              border: 1px solid #111827;
+            }
+            .top-grid {
+              display: grid;
+              grid-template-columns: 58% 42%;
+              border-bottom: 1px solid #111827;
+            }
+            .seller, .meta-box {
+              padding: 8px 10px;
+              min-height: 165px;
+            }
+            .seller {
+              border-right: 1px solid #111827;
+            }
+            .brand {
+              display: flex;
+              gap: 12px;
+              align-items: flex-start;
+            }
+            .logo {
+              width: 92px;
+              max-height: 74px;
+              object-fit: contain;
+            }
+            .business-name {
+              font-size: 23px;
+              font-weight: 700;
+              text-transform: uppercase;
+              line-height: 1.05;
+              margin-bottom: 4px;
+            }
+            .meta-grid {
+              display: grid;
+              grid-template-columns: 1fr 1fr;
+              border-left: 1px solid #111827;
+              height: 100%;
+            }
+            .meta-cell {
+              border-bottom: 1px solid #111827;
+              border-right: 1px solid #111827;
+              padding: 7px 8px;
+              min-height: 56px;
+            }
+            .meta-cell:nth-child(2n) {
+              border-right: none;
+            }
+            .meta-label, .section-title, .subtext {
+              color: #4b5563;
+              font-size: 10px;
+            }
+            .meta-value {
+              font-size: 14px;
+              font-weight: 700;
+              margin-top: 3px;
+            }
+            .party-grid {
+              display: grid;
+              grid-template-columns: 58% 42%;
+              border-bottom: 1px solid #111827;
+            }
+            .party-box, .transport-box {
+              padding: 8px 10px;
+              min-height: 106px;
+            }
+            .party-box {
+              border-right: 1px solid #111827;
+            }
+            .body-table, .tax-table {
+              width: 100%;
+              border-collapse: collapse;
+              table-layout: fixed;
+            }
+            .body-table th, .body-table td, .tax-table th, .tax-table td {
+              border: 1px solid #111827;
+              padding: 6px 7px;
+              vertical-align: top;
+              font-size: 11px;
+            }
+            .body-table thead th, .tax-table thead th {
+              background: #f1f5f9;
+              font-size: 10px;
+              font-weight: 700;
+            }
+            .body-table { border-left: none; border-right: none; }
+            .body-table th:first-child, .body-table td:first-child { border-left: none; width: 5%; }
+            .body-table th:nth-child(2), .body-table td:nth-child(2) { width: 41%; }
+            .body-table th:nth-child(3), .body-table td:nth-child(3) { width: 12%; }
+            .body-table th:nth-child(4), .body-table td:nth-child(4) { width: 10%; }
+            .body-table th:nth-child(5), .body-table td:nth-child(5) { width: 10%; }
+            .body-table th:nth-child(6), .body-table td:nth-child(6) { width: 10%; }
+            .body-table th:nth-child(7), .body-table td:nth-child(7) { width: 12%; border-right: none; }
+            .center { text-align: center; }
+            .right { text-align: right; }
+            .totals-wrap {
+              display: grid;
+              grid-template-columns: 58% 42%;
+              border-bottom: 1px solid #111827;
+            }
+            .totals-left {
+              border-right: 1px solid #111827;
+              padding: 8px 10px;
+            }
+            .totals-right {
+              padding: 0;
+            }
+            .totals-table {
+              width: 100%;
+              border-collapse: collapse;
+            }
+            .totals-table td {
+              border-bottom: 1px solid #111827;
+              padding: 7px 10px;
+              font-size: 11px;
+            }
+            .totals-table tr:last-child td {
+              border-bottom: none;
+            }
+            .label-cell {
+              text-align: right;
+              color: #111827;
+              font-weight: 600;
+            }
+            .grand-total td {
+              background: #eef2ff;
+              font-size: 14px;
+              font-weight: 700;
+            }
+            .summary-grid {
+              display: grid;
+              grid-template-columns: 58% 42%;
+              border-bottom: 1px solid #111827;
+            }
+            .words-box, .payment-box {
+              padding: 8px 10px;
+            }
+            .words-box {
+              border-right: 1px solid #111827;
+            }
+            .footer-grid {
+              display: grid;
+              grid-template-columns: 58% 42%;
+            }
+            .declaration-box, .signature-box {
+              padding: 10px;
+              min-height: 118px;
+            }
+            .declaration-box {
+              border-right: 1px solid #111827;
+            }
+            .signature-box {
+              display: flex;
+              flex-direction: column;
+              justify-content: space-between;
+              align-items: flex-end;
+            }
+            .signature {
+              max-width: 160px;
+              max-height: 70px;
+              object-fit: contain;
+            }
+            .muted { color: #6b7280; }
+            .divider-line { margin: 5px 0; border-top: 1px solid #d1d5db; }
+            .terms { white-space: pre-line; line-height: 1.45; font-size: 11px; }
+            @media print {
+              body { background: #ffffff; }
+              .sheet {
+                width: 100%;
+                min-height: auto;
+                margin: 0;
+                padding: 0;
+              }
+            }
+          </style>
+        </head>
+        <body>
+          <div class='sheet'>
+            <div class='title'>${escapeHtml(document.displayTitle)}</div>
+            <div class='frame'>
+              <div class='top-grid'>
+                <div class='seller'>
+                  <div class='brand'>
+                    ${if (showLogo) "<img class='logo' src='${toFileUrl(business.logoPath!!)}' alt='Logo' />" else ""}
+                    <div>
+                      <div class='business-name'>${escapeHtml(business.businessName)}</div>
+                      <div>${escapeHtml(business.address).replace("\n", "<br/>")}</div>
+                      ${if (business.city.isNotBlank()) "<div>${escapeHtml(business.city)} - ${escapeHtml(business.pin)}</div>" else ""}
+                      ${if (business.pan.isNotBlank()) "<div>PAN: ${escapeHtml(business.pan)}</div>" else ""}
+                      ${if (business.phone.isNotBlank()) "<div>Ph: ${escapeHtml(business.phone)}</div>" else ""}
+                      ${if (business.gstin.isNotBlank()) "<div>GSTIN/UIN: ${escapeHtml(business.gstin)}</div>" else ""}
+                      ${if (business.state.isNotBlank()) "<div>State Name: ${escapeHtml(business.state)}, Code: ${escapeHtml(business.stateCode)}</div>" else ""}
+                      ${if (business.email.isNotBlank()) "<div>E-Mail: ${escapeHtml(business.email)}</div>" else ""}
+                    </div>
+                  </div>
+                </div>
+                <div class='meta-grid'>
+                  <div class='meta-cell'>
+                    <div class='meta-label'>Invoice No.</div>
+                    <div class='meta-value'>${escapeHtml(document.invoiceNumber)}</div>
+                  </div>
+                  <div class='meta-cell'>
+                    <div class='meta-label'>Dated</div>
+                    <div class='meta-value'>${escapeHtml(document.issuedAtLabel)}</div>
+                  </div>
+                  <div class='meta-cell'>
+                    <div class='meta-label'>Mode / Terms of Payment</div>
+                    <div class='meta-value'>${escapeHtml(document.paymentSnapshot.modeLabel)}</div>
+                  </div>
+                  <div class='meta-cell'>
+                    <div class='meta-label'>Due Date</div>
+                    <div class='meta-value'>${escapeHtml(document.dueDateLabel.ifBlank { "-" })}</div>
+                  </div>
+                  <div class='meta-cell'>
+                    <div class='meta-label'>Reference No. & Date</div>
+                    <div class='meta-value'>${escapeHtml(voucher.referenceNo.ifBlank { "-" })}</div>
+                  </div>
+                  <div class='meta-cell'>
+                    <div class='meta-label'>Other References</div>
+                    <div class='meta-value'>${escapeHtml(voucher.dispatchDocNo.ifBlank { "-" })}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class='party-grid'>
+                <div class='party-box'>
+                  <div class='section-title'>Buyer (Bill to)</div>
+                  <div style='font-size:15px;font-weight:700;margin-top:2px;'>${escapeHtml(buyer?.name ?: "Walk-in Customer")}</div>
+                  ${if (!buyer?.address.isNullOrBlank()) "<div>${escapeHtml(buyer!!.address).replace("\n", "<br/>")}</div>" else ""}
+                  ${if (!buyer?.city.isNullOrBlank()) "<div>${escapeHtml(buyer!!.city)} - ${escapeHtml(buyer.pin)}</div>" else ""}
+                  ${if (!buyer?.phone.isNullOrBlank()) "<div>Phone: ${escapeHtml(buyer!!.phone)}</div>" else ""}
+                  ${if (!buyer?.email.isNullOrBlank()) "<div>Email: ${escapeHtml(buyer!!.email)}</div>" else ""}
+                  ${if (!buyer?.gstin.isNullOrBlank()) "<div>GSTIN: ${escapeHtml(buyer!!.gstin!!)}</div>" else ""}
+                  ${if (!buyer?.pan.isNullOrBlank()) "<div>PAN: ${escapeHtml(buyer!!.pan!!)}</div>" else ""}
+                  ${if (!buyer?.state.isNullOrBlank()) "<div>Place of Supply: ${escapeHtml(buyer!!.state)}</div>" else ""}
+                  ${if (!buyer?.stateCode.isNullOrBlank()) "<div>State Code: ${escapeHtml(buyer!!.stateCode)}</div>" else ""}
+                </div>
+                <div class='transport-box'>
+                  <div class='section-title'>Transport / Delivery / Payment</div>
+                  <div style='margin-top:2px;'>${transportRows.ifBlank { "<span class='muted'>No transport details</span>" }}</div>
+                  <div class='divider-line'></div>
+                  <div>${document.paymentSnapshot.summaryLabel}</div>
+                  ${if (bankDetails.isNotBlank()) "<div class='divider-line'></div><div>$bankDetails</div>" else ""}
+                </div>
+              </div>
+
+              <table class='body-table'>
+                <thead>
+                  <tr>
+                    <th>Sl No.</th>
+                    <th>Description of Goods</th>
+                    <th>HSN/SAC</th>
+                    <th>Quantity</th>
+                    <th>Unit</th>
+                    <th>Rate</th>
+                    <th>Taxable Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  $itemRows
+                  $adjustmentRows
+                </tbody>
+              </table>
+
+              <div class='totals-wrap'>
+                <div class='totals-left'>
+                  <div class='section-title'>Amount Chargeable (in words)</div>
+                  <div style='font-size:15px;font-weight:700;margin-top:4px;'>${escapeHtml(document.amountInWords)}</div>
+                </div>
+                <div class='totals-right'>
+                  <table class='totals-table'>
+                    <tr><td>Items Quantity</td><td class='right'>${formatQty(totals.totalQuantity)}</td></tr>
+                    <tr><td>Taxable Amount</td><td class='right'>${formatMoney(totals.taxableAmount)}</td></tr>
+                    ${if (voucher.cgst > 0.0) "<tr><td>CGST</td><td class='right'>${formatMoney(voucher.cgst)}</td></tr>" else ""}
+                    ${if (voucher.sgst > 0.0) "<tr><td>SGST / UTGST</td><td class='right'>${formatMoney(voucher.sgst)}</td></tr>" else ""}
+                    ${if (voucher.igst > 0.0) "<tr><td>IGST</td><td class='right'>${formatMoney(voucher.igst)}</td></tr>" else ""}
+                    ${document.additionalCharges.joinToString("") { "<tr><td>${escapeHtml(it.label)}</td><td class='right'>${formatMoney(it.amount)}</td></tr>" }}
+                    ${if (abs(voucher.roundOff) > 0.0) "<tr><td>Round Off</td><td class='right'>${formatSignedMoney(voucher.roundOff)}</td></tr>" else ""}
+                    <tr class='grand-total'><td>Grand Total</td><td class='right'>${formatMoney(totals.netAmount)}</td></tr>
+                  </table>
+                </div>
+              </div>
+
+              <table class='tax-table'>
+                <thead>
+                  <tr>
+                    <th>HSN/SAC</th>
+                    <th>Taxable Value</th>
+                    <th>CGST Rate</th>
+                    <th>CGST Amount</th>
+                    <th>SGST Rate</th>
+                    <th>SGST Amount</th>
+                    <th>IGST Rate</th>
+                    <th>IGST Amount</th>
+                    <th>Total Tax Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  $taxRows
+                  <tr>
+                    <td class='right'><strong>Total</strong></td>
+                    <td class='right'><strong>${formatMoney(totals.taxableAmount)}</strong></td>
+                    <td class='center'>${if (isIntrastate && totals.cgst > 0.0) rateLabel(document.taxSummary.firstOrNull()?.cgstRate ?: 0.0) else ""}</td>
+                    <td class='right'><strong>${formatMoney(totals.cgst)}</strong></td>
+                    <td class='center'>${if (isIntrastate && totals.sgst > 0.0) rateLabel(document.taxSummary.firstOrNull()?.sgstRate ?: 0.0) else ""}</td>
+                    <td class='right'><strong>${formatMoney(totals.sgst)}</strong></td>
+                    <td class='center'>${if (!isIntrastate && totals.igst > 0.0) rateLabel(document.taxSummary.firstOrNull()?.igstRate ?: 0.0) else ""}</td>
+                    <td class='right'><strong>${formatMoney(totals.igst)}</strong></td>
+                    <td class='right'><strong>${formatMoney(totals.totalTaxAmount)}</strong></td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <div class='summary-grid'>
+                <div class='words-box'>
+                  <div class='section-title'>Tax Amount (in words)</div>
+                  <div style='font-weight:700;margin-top:4px;'>${escapeHtml(document.taxAmountInWords)}</div>
+                </div>
+                <div class='payment-box'>
+                  <div class='section-title'>Balance Snapshot</div>
+                  <div>Previous Due: ${formatMoney(document.paymentSnapshot.previousDue)}</div>
+                  <div>Current Invoice: ${formatMoney(document.paymentSnapshot.currentInvoiceAmount)}</div>
+                  <div>Advance Received: ${formatMoney(document.paymentSnapshot.advanceReceived)}</div>
+                  <div>Part Payment: ${formatMoney(document.paymentSnapshot.partPaymentReceived)}</div>
+                  <div><strong>Outstanding: ${formatMoney(document.paymentSnapshot.outstandingAmount)}</strong></div>
+                  ${qrSection}
+                </div>
+              </div>
+
+              <div class='footer-grid'>
+                <div class='declaration-box'>
+                  <div class='section-title'>Declaration / Terms & Conditions</div>
+                  <div class='terms'>${escapeHtml(business.termsAndConditions.ifBlank { business.invoiceFooterText }).replace("\n", "<br/>")}</div>
+                </div>
+                <div class='signature-box'>
+                  <div style='text-align:right; width:100%; font-weight:700;'>for ${escapeHtml(business.businessName)}</div>
+                  ${if (showSignature) "<img class='signature' src='${toFileUrl(business.signaturePath!!)}' alt='Signature' />" else "<div style='height:72px;'></div>"}
+                  <div>Authorised Signatory</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </body>
+        </html>
+        """.trimIndent()
+    }
+
+    private suspend fun renderHtmlToPdf(
+        context: Context,
+        html: String,
+        jobName: String,
+        outputFile: File
+    ) {
+        withContext(Dispatchers.Main) {
+            val webView = createConfiguredWebView(context)
+            try {
+                loadHtmlIntoWebView(webView, html)
+                writePrintAdapterToFile(webView, jobName, outputFile)
+            } finally {
+                webView.destroy()
             }
         }
     }
 
-    private fun writePdfFromWebView(
-        context: Context,
+    private fun createConfiguredWebView(context: Context): WebView =
+        WebView(context).apply {
+            configureInvoiceWebView(this)
+        }
+
+    private suspend fun loadHtmlIntoWebView(webView: WebView, html: String) {
+        suspendCancellableCoroutine<Unit> { continuation ->
+            webView.webViewClient = object : WebViewClient() {
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    val target = view ?: return
+                    target.postVisualStateCallback(
+                        System.currentTimeMillis(),
+                        object : WebView.VisualStateCallback() {
+                            override fun onComplete(requestId: Long) {
+                                if (continuation.isActive) {
+                                    continuation.resume(Unit)
+                                }
+                            }
+                        }
+                    )
+                }
+            }
+            webView.loadDataWithBaseURL("file:///", html, "text/html", "UTF-8", null)
+        }
+    }
+
+    private suspend fun writePrintAdapterToFile(
         webView: WebView,
-        voucherNo: String,
-        onComplete: (File?) -> Unit
+        jobName: String,
+        outputFile: File
     ) {
+        suspendCancellableCoroutine<Unit> { continuation ->
+            WebViewPdfWriter.writePdf(
+                webView,
+                jobName,
+                buildPrintAttributes(),
+                outputFile,
+                object : WebViewPdfWriter.Callback {
+                    override fun onSuccess() {
+                        if (continuation.isActive) continuation.resume(Unit)
+                    }
+
+                    override fun onError(error: Throwable) {
+                        if (continuation.isActive) continuation.resumeWithException(error)
+                    }
+                }
+            )
+        }
+    }
+
+    private fun buildPrintAttributes(): PrintAttributes =
+        PrintAttributes.Builder()
+            .setMediaSize(PrintAttributes.MediaSize.ISO_A4)
+            .setResolution(pdfResolution)
+            .setMinMargins(PrintAttributes.Margins.NO_MARGINS)
+            .build()
+
+    private suspend fun validatePdfFile(file: File, bundle: InvoiceRenderBundle) {
+        check(file.exists()) { "PDF file was not created." }
+        check(file.length() > 128L) { "PDF file is blank." }
+        val header = file.inputStream().use { input ->
+            ByteArray(4).also { input.read(it) }.toString(Charsets.US_ASCII)
+        }
+        check(header.startsWith("%PDF")) { "Generated file is not a valid PDF." }
+        check(bundle.document.invoiceNumber.isNotBlank()) { "Invoice identity missing." }
+    }
+
+    private fun buildTaxSummary(items: List<VoucherItem>, voucher: Voucher): List<InvoiceTaxSummary> {
+        return items.groupBy { "${it.hsnCode}|${it.gstRate}" }
+            .entries
+            .sortedBy { it.key }
+            .map { (_, groupedItems) ->
+                val first = groupedItems.first()
+                val taxableValue = groupedItems.sumOf { it.taxableAmount }
+                val cgstAmount = groupedItems.sumOf { it.cgstAmount }
+                val sgstAmount = groupedItems.sumOf { it.sgstAmount }
+                val igstAmount = groupedItems.sumOf { it.igstAmount }
+                InvoiceTaxSummary(
+                    hsnCode = first.hsnCode,
+                    taxableValue = taxableValue,
+                    cgstRate = if (!voucher.isIgst) first.gstRate / 2.0 else 0.0,
+                    cgstAmount = cgstAmount,
+                    sgstRate = if (!voucher.isIgst) first.gstRate / 2.0 else 0.0,
+                    sgstAmount = sgstAmount,
+                    igstRate = if (voucher.isIgst) first.gstRate else 0.0,
+                    igstAmount = igstAmount,
+                    totalTaxAmount = cgstAmount + sgstAmount + igstAmount
+                )
+            }
+    }
+
+    private fun resolvePaymentLabel(voucher: Voucher, extras: VoucherRenderExtras): String {
+        return when {
+            extras.isAdvance && voucher.type == "RECEIPT" -> "ADVANCE RECEIVED"
+            extras.isAdvance && voucher.type == "PAYMENT" -> "ADVANCE PAID"
+            voucher.paymentMode.equals("PART PAYMENT", ignoreCase = true) -> "PART PAYMENT"
+            voucher.paymentMode.equals("CREDIT", ignoreCase = true) -> "CREDIT"
+            else -> voucher.paymentMode.replace("_", " ")
+        }
+    }
+
+    private fun buildPaymentSummaryLabel(voucher: Voucher, extras: VoucherRenderExtras): String {
+        return when {
+            extras.isAdvance -> "Advance amount recorded for future adjustment."
+            voucher.paymentMode.equals("PART PAYMENT", ignoreCase = true) -> {
+                val dueText = extras.creditDueDate.takeIf { it.isNotBlank() }?.let(::formatDueDateText)
+                "Part payment received: ${formatMoney(extras.partialAmountPaid)}. Balance due: ${formatMoney(extras.remainingCreditAmount)}${dueText?.let { " by $it" } ?: ""}."
+            }
+            voucher.paymentMode.equals("CREDIT", ignoreCase = true) -> {
+                val dueText = extras.creditDueDate.takeIf { it.isNotBlank() }?.let(::formatDueDateText)
+                "Full amount on credit${dueText?.let { " due by $it" } ?: ""}."
+            }
+            else -> "Payment captured through ${resolvePaymentLabel(voucher, extras)}."
+        }
+    }
+
+    private fun buildInvoiceFileStem(document: InvoiceDocument): String {
+        val sequence = document.invoiceNumber.substringAfterLast('/').padStart(5, '0')
+        val yearCode = document.financialYearCode.replace("/", "-")
+        val prefix = when (document.voucher.type) {
+            "PURCHASE" -> "PUR"
+            "SALE_RETURN" -> "SRN"
+            "PURCHASE_RETURN" -> "PRN"
+            "PAYMENT" -> "PMT"
+            "RECEIPT" -> "RCP"
+            else -> "INV"
+        }
+        return "$prefix-$yearCode-$sequence"
+    }
+
+    fun shareInvoicePdf(
+        context: Context,
+        pdfFile: File
+    ) {
+        val uri = FileProvider.getUriForFile(context, context.packageName + ".provider", pdfFile)
+        ExportStorageManager.shareFile(
+            context,
+            ExportStorageManager.ExportResult(
+                fileName = pdfFile.name,
+                locationLabel = pdfFile.absolutePath,
+                uri = uri,
+                mimeType = "application/pdf"
+            )
+        )
+    }
+
+    fun shareInvoicePdfToWhatsApp(
+        context: Context,
+        pdfFile: File
+    ) {
+        val uri = FileProvider.getUriForFile(context, context.packageName + ".provider", pdfFile)
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "application/pdf"
+            setPackage("com.whatsapp")
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
         try {
-            val dir = File(context.getExternalFilesDir(null), "ZeroBook/Invoices")
-            dir.mkdirs()
-            val pdfFile = File(dir, "${voucherNo.replace("/", "-")}.pdf")
-            val pageWidth = 1240
-            val pageHeight = 1754
-            val widthSpec = View.MeasureSpec.makeMeasureSpec(pageWidth, View.MeasureSpec.EXACTLY)
-            val heightSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
-            webView.measure(widthSpec, heightSpec)
+            context.startActivity(intent)
+        } catch (_: ActivityNotFoundException) {
+            context.startActivity(Intent.createChooser(intent.apply { setPackage(null) }, "Share Invoice"))
+        }
+    }
 
-            val contentHeight = max(
-                webView.measuredHeight,
-                (webView.contentHeight * context.resources.displayMetrics.density).roundToInt()
-            ).coerceAtLeast(pageHeight)
+    fun exportInvoicePdf(
+        context: Context,
+        pdfFile: File
+    ): ExportStorageManager.ExportResult =
+        ExportStorageManager.exportFile(
+            context = context,
+            sourceFile = pdfFile,
+            displayName = pdfFile.name,
+            mimeType = "application/pdf",
+            target = ExportTarget.Invoices
+        )
 
-            webView.layout(0, 0, pageWidth, contentHeight)
+    fun emailInvoicePdf(
+        context: Context,
+        pdfFile: File,
+        recipient: String?,
+        subject: String,
+        body: String
+    ) {
+        val uri = FileProvider.getUriForFile(context, context.packageName + ".provider", pdfFile)
+        EmailComposer.compose(
+            context = context,
+            draft = EmailComposer.Draft(
+                recipients = recipient?.takeIf { it.isNotBlank() }?.let(::listOf).orEmpty(),
+                subject = subject,
+                body = body,
+                attachments = listOf(uri)
+            ),
+            chooserTitle = "Send Invoice Email"
+        )
+    }
 
-            val pdfDocument = PdfDocument()
-            val totalPages = max(1, ceil(contentHeight / pageHeight.toDouble()).toInt())
-            for (pageIndex in 0 until totalPages) {
-                val pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageIndex + 1).create()
-                val page = pdfDocument.startPage(pageInfo)
-                val canvas = page.canvas
-                canvas.save()
-                canvas.translate(0f, -(pageIndex * pageHeight).toFloat())
-                webView.draw(canvas)
-                canvas.restore()
-                pdfDocument.finishPage(page)
+    fun amountInWords(amount: Double): String {
+        val safeAmount = amount.coerceAtLeast(0.0)
+        val rupees = safeAmount.toLong()
+        val paise = ((safeAmount - rupees) * 100).roundToInt().coerceIn(0, 99)
+        var result = "Indian Rupees ${numToWords(rupees).trim().ifBlank { "Zero" }}"
+        if (paise > 0) {
+            result += " and ${numToWords(paise.toLong()).trim()} Paise"
+        }
+        return "$result Only"
+    }
+
+    private fun loadVoucherExtras(db: AppDatabase, voucherId: String): VoucherRenderExtras {
+        val cursor = db.openHelper.readableDatabase.query(
+            """
+            SELECT payment_mode, partial_amount_paid, partial_payment_submode, credit_due_date,
+                   remaining_credit_amount, is_advance, advance_for
+            FROM vouchers WHERE id = ?
+            """.trimIndent(),
+            arrayOf(voucherId)
+        )
+        cursor.use {
+            return if (it.moveToFirst()) {
+                VoucherRenderExtras(
+                    paymentModeValue = it.getString(0).orEmpty(),
+                    partialAmountPaid = it.getDouble(1),
+                    partialPaymentSubmode = it.getString(2).orEmpty(),
+                    creditDueDate = it.getString(3).orEmpty(),
+                    remainingCreditAmount = it.getDouble(4),
+                    isAdvance = it.getInt(5) == 1,
+                    advanceFor = it.getString(6).orEmpty()
+                )
+            } else {
+                VoucherRenderExtras()
             }
+        }
+    }
 
-            FileOutputStream(pdfFile).use { output ->
-                pdfDocument.writeTo(output)
-            }
-            pdfDocument.close()
-            onComplete(pdfFile)
-        } catch (_: Exception) {
-            onComplete(null)
+    private fun sha256(value: String): String =
+        MessageDigest.getInstance("SHA-256")
+            .digest(value.toByteArray())
+            .joinToString("") { "%02x".format(it) }
+
+    private fun numToWords(n: Long): String {
+        if (n == 0L) return ""
+        return when {
+            n < 20 -> ones[n.toInt()] + " "
+            n < 100 -> tens[(n / 10).toInt()] + " " + numToWords(n % 10)
+            n < 1000 -> ones[(n / 100).toInt()] + " Hundred " + numToWords(n % 100)
+            n < 100000 -> numToWords(n / 1000) + "Thousand " + numToWords(n % 1000)
+            n < 10000000 -> numToWords(n / 100000) + "Lakh " + numToWords(n % 100000)
+            else -> numToWords(n / 10000000) + "Crore " + numToWords(n % 10000000)
         }
     }
 }
@@ -912,80 +1176,35 @@ fun configureInvoiceWebView(webView: WebView) {
     }
 }
 
-fun printInvoice(
+suspend fun printInvoice(
     context: Context,
-    htmlContent: String,
-    invoiceNo: String
+    bundle: InvoiceGenerator.InvoiceRenderBundle
 ) {
-    val webView = WebView(context)
-    configureInvoiceWebView(webView)
-    webView.webViewClient = object : WebViewClient() {
-        override fun onPageFinished(view: WebView?, url: String?) {
-            Handler(Looper.getMainLooper()).postDelayed({
-                val printManager = context.getSystemService(Context.PRINT_SERVICE) as PrintManager
-                val printAdapter = view?.createPrintDocumentAdapter(invoiceNo) ?: return@postDelayed
-                printManager.print(
-                    invoiceNo,
-                    printAdapter,
-                    PrintAttributes.Builder()
-                        .setMediaSize(PrintAttributes.MediaSize.ISO_A4)
-                        .build()
-                )
-            }, 500)
-        }
-    }
-    webView.loadDataWithBaseURL(
-        "file:///",
-        htmlContent,
-        "text/html",
-        "UTF-8",
-        null
-    )
+    InvoiceGenerator.printBundle(context, bundle)
 }
 
 fun shareInvoicePdf(
     context: Context,
     pdfFile: File
-) {
-    val uri = FileProvider.getUriForFile(
-        context,
-        context.packageName + ".provider",
-        pdfFile
-    )
-    val intent = Intent(Intent.ACTION_SEND).apply {
-        type = "application/pdf"
-        putExtra(Intent.EXTRA_STREAM, uri)
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    }
-    context.startActivity(Intent.createChooser(intent, "Share Invoice"))
-}
+) = InvoiceGenerator.shareInvoicePdf(context, pdfFile)
 
 fun shareInvoicePdfToWhatsApp(
     context: Context,
     pdfFile: File
-) {
-    val uri = FileProvider.getUriForFile(
-        context,
-        context.packageName + ".provider",
-        pdfFile
-    )
-    val intent = Intent(Intent.ACTION_SEND).apply {
-        type = "application/pdf"
-        setPackage("com.whatsapp")
-        putExtra(Intent.EXTRA_STREAM, uri)
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    }
-    try {
-        context.startActivity(intent)
-    } catch (_: ActivityNotFoundException) {
-        context.startActivity(
-            Intent.createChooser(
-                intent.apply { setPackage(null) },
-                "Share Invoice"
-            )
-        )
-    }
-}
+) = InvoiceGenerator.shareInvoicePdfToWhatsApp(context, pdfFile)
+
+fun exportInvoicePdf(
+    context: Context,
+    pdfFile: File
+): ExportStorageManager.ExportResult = InvoiceGenerator.exportInvoicePdf(context, pdfFile)
+
+fun emailInvoicePdf(
+    context: Context,
+    pdfFile: File,
+    recipient: String?,
+    subject: String,
+    body: String
+) = InvoiceGenerator.emailInvoicePdf(context, pdfFile, recipient, subject, body)
 
 private fun escapeHtml(value: String): String =
     value.replace("&", "&amp;")
@@ -995,8 +1214,7 @@ private fun escapeHtml(value: String): String =
 private fun toFileUrl(path: String): String =
     if (path.startsWith("/")) "file://$path" else "file:///$path"
 
-private fun formatMoney(value: Double): String =
-    DecimalFormat("#,##0.00").format(value)
+private fun formatMoney(value: Double): String = DecimalFormat("#,##0.00").format(value)
 
 private fun formatSignedMoney(value: Double): String =
     if (value < 0) "-${formatMoney(abs(value))}" else formatMoney(value)
@@ -1004,8 +1222,8 @@ private fun formatSignedMoney(value: Double): String =
 private fun formatQty(value: Double): String =
     String.format(Locale.ENGLISH, "%.3f", value)
 
-private fun formatTaxRate(value: Double): String =
-    if (value % 1.0 == 0.0) String.format(Locale.ENGLISH, "%.0f", value) else String.format(Locale.ENGLISH, "%.2f", value)
+private fun rateLabel(value: Double): String =
+    if (value <= 0.0) "" else if (value % 1.0 == 0.0) String.format(Locale.ENGLISH, "%.0f%%", value) else String.format(Locale.ENGLISH, "%.2f%%", value)
 
 private fun formatDueDateText(raw: String): String {
     val millis = raw.toLongOrNull()
@@ -1014,13 +1232,4 @@ private fun formatDueDateText(raw: String): String {
     } else {
         raw
     }
-}
-
-private fun bankDetailRow(label: String, value: String): String {
-    return """
-    <tr>
-      <td style='color:#444;padding:2px 8px 2px 0;border:none;white-space:nowrap;'>$label</td>
-      <td style='font-weight:bold;border:none;padding:2px 0;'>${escapeHtml(value)}</td>
-    </tr>
-    """.trimIndent()
 }

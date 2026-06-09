@@ -4,6 +4,19 @@ import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
+@Entity(tableName = "financial_years")
+data class FinancialYear(
+    @PrimaryKey val code: String,
+    val startDate: Long,
+    val endDate: Long,
+    val isClosed: Boolean = false,
+    val isLocked: Boolean = false,
+    val sourceFinancialYearCode: String? = null,
+    val createdAt: Long = System.currentTimeMillis(),
+    val closedAt: Long? = null,
+    val lockedAt: Long? = null
+)
+
 @Entity(tableName = "business_profile")
 data class BusinessProfile(
     @PrimaryKey val id: Int = 1,
@@ -38,7 +51,7 @@ data class BusinessProfile(
     val showHsnColumn: Boolean = true,
     val showAmountInWords: Boolean = true,
     val showTaxAmountInWords: Boolean = true,
-    val fyLabel: String = "2025-26",
+    val fyLabel: String = FinancialYearUtils.currentFinancialYearCode(),
     val termsAndConditions: String = "1. Goods once sold will not be taken back.\n2. Payment due within agreed credit period.\n3. Subject to local jurisdiction.",
     val createdAt: Long = System.currentTimeMillis()
 )
@@ -127,6 +140,7 @@ data class Voucher(
     val memoNumber: String? = null,
     val branchName: String? = null,
     val outstandingAmount: Double = 0.0,
+    val financialYearCode: String = FinancialYearUtils.currentFinancialYearCode(),
     val createdAt: Long = System.currentTimeMillis()
 )
 
@@ -147,7 +161,8 @@ data class VoucherItem(
     val cgstAmount: Double,
     val sgstAmount: Double,
     val igstAmount: Double,
-    val totalAmount: Double
+    val totalAmount: Double,
+    val financialYearCode: String = FinancialYearUtils.currentFinancialYearCode()
 )
 
 // Additional charges can be serialized into voucher.additionalChargesJson
@@ -168,6 +183,7 @@ data class LedgerEntry(
     val debit: Double,
     val credit: Double,
     val narration: String,
+    val financialYearCode: String = FinancialYearUtils.currentFinancialYearCode(),
     val createdAt: Long = System.currentTimeMillis()
 )
 
@@ -185,6 +201,7 @@ data class BankCashTransaction(
     val chequeDate: Long?,
     val bankName: String?,
     val receiptImagePath: String? = null,
+    val financialYearCode: String = FinancialYearUtils.currentFinancialYearCode(),
     val createdAt: Long = System.currentTimeMillis()
 )
 
@@ -194,6 +211,7 @@ data class ReceiptAllocation(
     val receiptId: String, // Voucher ID of RECEIPT or PAYMENT voucher
     val invoiceId: String, // Voucher ID of SALE or PURCHASE voucher
     val allocatedAmount: Double,
+    val financialYearCode: String = FinancialYearUtils.currentFinancialYearCode(),
     val createdAt: Long = System.currentTimeMillis()
 )
 
@@ -229,5 +247,55 @@ data class BillReceivable(
     val status: String = "UNPAID", // UNPAID / PARTIAL / PAID / OVERDUE
     val daysOverdue: Int = 0,
     val lastReminderDate: Long? = null,
+    val financialYearCode: String = FinancialYearUtils.currentFinancialYearCode(),
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+@Entity(
+    tableName = "party_financial_year_balances",
+    primaryKeys = ["partyId", "financialYearCode"]
+)
+data class PartyFinancialYearBalance(
+    val partyId: String,
+    val financialYearCode: String,
+    val openingBalance: Double = 0.0,
+    val balanceType: String = "DR",
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
+)
+
+@Entity(
+    tableName = "product_financial_year_balances",
+    primaryKeys = ["productId", "financialYearCode"]
+)
+data class ProductFinancialYearBalance(
+    val productId: String,
+    val financialYearCode: String,
+    val openingStock: Double = 0.0,
+    val openingStockValue: Double = 0.0,
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
+)
+
+@Entity(
+    tableName = "ledger_account_financial_year_balances",
+    primaryKeys = ["accountId", "financialYearCode"]
+)
+data class LedgerAccountFinancialYearBalance(
+    val accountId: String,
+    val financialYearCode: String,
+    val openingBalance: Double = 0.0,
+    val balanceType: String = "DR",
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "financial_year_audit_logs")
+data class FinancialYearAuditLog(
+    @PrimaryKey val id: String,
+    val action: String,
+    val financialYearCode: String,
+    val targetFinancialYearCode: String? = null,
+    val detailsJson: String = "",
     val createdAt: Long = System.currentTimeMillis()
 )

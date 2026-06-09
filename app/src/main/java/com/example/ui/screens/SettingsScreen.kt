@@ -54,6 +54,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.data.*
+import com.example.services.ExportStorageManager
+import com.example.services.ExportTarget
 import com.example.ui.AppViewModel
 import com.example.ui.theme.AppColors
 import com.example.ui.theme.Colors
@@ -84,24 +86,26 @@ fun SettingsScreen(
 
     var activeSubMode by remember { mutableStateOf(if (isDesktop) "BUSINESS" else "MENU") }
 
-    val createCsvLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = androidx.activity.result.contract.ActivityResultContracts.CreateDocument("text/csv")
-    ) { uri ->
-        if (uri != null) {
-            try {
-                context.contentResolver.openOutputStream(uri)?.use { output ->
-                    output.write("VoucherNo,Date,Type,Party,PaymentMode,TaxableAmount,CGST,SGST,IGST,RoundOff,NetAmount\n".toByteArray())
-                    val javaSdf = java.text.SimpleDateFormat("dd-MM-yyyy HH:mm", java.util.Locale.US)
-                    for (v in vouchersForExport) {
-                        val dateStr = javaSdf.format(java.util.Date(v.createdAt))
-                        val rowStr = "${v.voucherNo},$dateStr,${v.type},${v.partyId ?: "Cash"},${v.paymentMode},${v.taxableAmount},${v.cgst},${v.sgst},${v.igst},${v.roundOff},${v.netAmount}\n"
-                        output.write(rowStr.toByteArray())
-                    }
+    val exportCsv: () -> Unit = {
+        try {
+            val javaSdf = java.text.SimpleDateFormat("dd-MM-yyyy HH:mm", java.util.Locale.US)
+            val content = buildString {
+                append("VoucherNo,Date,Type,Party,PaymentMode,TaxableAmount,CGST,SGST,IGST,RoundOff,NetAmount\n")
+                vouchersForExport.forEach { v ->
+                    val dateStr = javaSdf.format(java.util.Date(v.createdAt))
+                    append("${v.voucherNo},$dateStr,${v.type},${v.partyId ?: "Cash"},${v.paymentMode},${v.taxableAmount},${v.cgst},${v.sgst},${v.igst},${v.roundOff},${v.netAmount}\n")
                 }
-                android.widget.Toast.makeText(context, "Excel (CSV) Export completed successfully!", android.widget.Toast.LENGTH_LONG).show()
-            } catch (e: Exception) {
-                android.widget.Toast.makeText(context, "Export failed: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
             }
+            val result = ExportStorageManager.exportBytes(
+                context = context,
+                bytes = content.toByteArray(),
+                displayName = "ZeroBook_Vouchers_${viewModel.financialYear.value}.csv",
+                mimeType = "text/csv",
+                target = ExportTarget.Exports
+            )
+            Toast.makeText(context, "Saved ${result.fileName} to ${result.locationLabel}", Toast.LENGTH_LONG).show()
+        } catch (e: Exception) {
+            Toast.makeText(context, "Export failed: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -730,39 +734,20 @@ fun SettingsScreen(
                     }
                 }
             }
-        } else if (activeSubMode == "FY") {
+    } else if (activeSubMode == "FY") {
         val context = LocalContext.current
         val profile = origProfile ?: BusinessProfile(
             businessName = "", ownerName = "", address = "", city = "", state = "West Bengal", stateCode = "19",
             pin = "", phone = "", email = "", gstin = "", pan = "", bankName = "", accountNo = "", ifsc = "",
             logoPath = null, signaturePath = null
         )
-        val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
-        val currentFyLabel = (origProfile?.fyLabel?.takeIf { it.isNotBlank() }
-            ?: viewModel.financialYear.collectAsState().value)
-        var startYearText by remember(currentFyLabel) {
-            val yearPart = currentFyLabel.substringBefore("-").toIntOrNull() ?: 2025
-            mutableStateOf(yearPart.toString())
-        }
-        var isSaved by remember { mutableStateOf(false) }
-
-        val startYearVal = startYearText.toLongOrNull()
-        val isValid = startYearVal != null && startYearVal > 0
-        val calculatedEndYearText = if (isValid) (startYearVal!! + 1).toString() else ""
-        val calculatedLabel = if (isValid) {
-            val endYrMod = (startYearVal!! + 1) % 100
-            val formattedEndYr = String.format("%02d", endYrMod)
-            "$startYearVal-$formattedEndYr"
-        } else ""
-
-        val saveAction = {
-            if (isValid) {
-                viewModel.financialYear.value = calculatedLabel
-                viewModel.updateProfile(profile.copy(fyLabel = calculatedLabel)) {}
-                isSaved = true
-                Toast.makeText(context, "Saved: FY $calculatedLabel", Toast.LENGTH_SHORT).show()
-            }
-        }
+        val currentFyLabel = viewModel.financialYear.collectAsState().value
+        val availableYears by viewModel.availableFinancialYears.collectAsState()
+        var selectedFinancialYear by remember(currentFyLabel) { mutableStateOf(currentFyLabel) }
+        var financialYearMenuExpanded by remember { mutableStateOf(false) }
+        var lockPreviousYear by remember { mutableStateOf(false) }
+        var isClosingYear by remember { mutableStateOf(false) }
+        val nextFinancialYear = remember(selectedFinancialYear) { FinancialYearUtils.nextFinancialYear(selectedFinancialYear) }
 
         Scaffold(
             topBar = {
@@ -809,130 +794,128 @@ fun SettingsScreen(
                         )
 
                         Text(
-                            text = "Enter Start Year",
+                            text = "Active Financial Year",
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold,
                             color = AppColors.textPrimary
                         )
 
-                        OutlinedTextField(
-                            value = startYearText,
-                            onValueChange = { text ->
-                                val cleaned = text.replace(Regex("[^0-9]"), "")
-                                if (cleaned.length <= 9) {
-                                    startYearText = cleaned
-                                    isSaved = false
-                                }
-                            },
-                            placeholder = { Text("2025", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = AppColors.textTertiary) },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(
-                                keyboardType = KeyboardType.Decimal,
-                                imeAction = ImeAction.Done
-                            ),
-                            keyboardActions = KeyboardActions(
-                                onDone = {
-                                    saveAction()
-                                    focusManager.clearFocus()
-                                }
-                            ),
-                            textStyle = TextStyle(
-                                fontSize = 28.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = AppColors.primary,
-                                textAlign = TextAlign.Center
-                            ),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = AppColors.screenBg,
-                                unfocusedContainerColor = AppColors.screenBg,
-                                focusedBorderColor = AppColors.primary,
-                                unfocusedBorderColor = AppColors.border
-                            ),
-                            modifier = Modifier
-                                .width(180.dp)
-                                .onFocusChanged { focusState ->
-                                    if (!focusState.isFocused) {
-                                        saveAction()
-                                    }
-                                }
-                        )
-
-                        if (!isValid && startYearText.isNotEmpty()) {
-                            Text(
-                                text = "Enter a valid start year",
-                                color = AppColors.error,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-
-                        if (isValid) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Card(
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = CardDefaults.cardColors(containerColor = AppColors.primary.copy(alpha = 0.05f)),
-                                border = BorderStroke(1.dp, AppColors.primary.copy(alpha = 0.2f)),
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(16.dp),
-                                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    Text(
-                                        text = "Financial Year: $startYearText - $calculatedEndYearText",
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 15.sp,
-                                        color = AppColors.textPrimary
-                                    )
-                                    Text(
-                                        text = "Label: $calculatedLabel",
-                                        fontWeight = FontWeight.Medium,
-                                        fontSize = 13.sp,
-                                        color = AppColors.textSecondary
-                                    )
-                                }
-                            }
-                        }
-
-                        if (isSaved && isValid) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                modifier = Modifier.padding(top = 8.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.CheckCircle,
-                                    contentDescription = "Saved successfully",
-                                    tint = AppColors.credit,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Text(
-                                    text = "Saved: FY $calculatedLabel",
-                                    color = AppColors.credit,
+                        ExposedDropdownMenuBox(
+                            expanded = financialYearMenuExpanded,
+                            onExpandedChange = { financialYearMenuExpanded = !financialYearMenuExpanded }
+                        ) {
+                            OutlinedTextField(
+                                value = selectedFinancialYear,
+                                onValueChange = {},
+                                readOnly = true,
+                                singleLine = true,
+                                textStyle = TextStyle(
+                                    fontSize = 22.sp,
                                     fontWeight = FontWeight.Bold,
-                                    fontSize = 13.sp
-                                )
+                                    color = AppColors.primary,
+                                    textAlign = TextAlign.Center
+                                ),
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = financialYearMenuExpanded) },
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedContainerColor = AppColors.screenBg,
+                                    unfocusedContainerColor = AppColors.screenBg,
+                                    focusedBorderColor = AppColors.primary,
+                                    unfocusedBorderColor = AppColors.border
+                                ),
+                                modifier = Modifier
+                                    .menuAnchor()
+                                    .width(220.dp)
+                            )
+                            ExposedDropdownMenu(
+                                expanded = financialYearMenuExpanded,
+                                onDismissRequest = { financialYearMenuExpanded = false }
+                            ) {
+                                availableYears.forEach { yearCode ->
+                                    DropdownMenuItem(
+                                        text = { Text(yearCode) },
+                                        onClick = {
+                                            selectedFinancialYear = yearCode
+                                            financialYearMenuExpanded = false
+                                        }
+                                    )
+                                }
                             }
                         }
 
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = AppColors.primary.copy(alpha = 0.05f)),
+                            border = BorderStroke(1.dp, AppColors.primary.copy(alpha = 0.2f)),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text("Current active year: $currentFyLabel", fontWeight = FontWeight.SemiBold, color = AppColors.textPrimary)
+                                Text("Next year prepared for carry forward: $nextFinancialYear", fontSize = 13.sp, color = AppColors.textSecondary)
+                                Text("Switching years only filters records. Nothing is deleted from the local database.", fontSize = 12.sp, color = AppColors.textSecondary)
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Checkbox(
+                                checked = lockPreviousYear,
+                                onCheckedChange = { lockPreviousYear = it }
+                            )
+                            Text("Lock $selectedFinancialYear after carry forward", color = AppColors.textSecondary)
+                        }
                     }
                 }
                 
                 Button(
                     onClick = {
-                        if (isValid) {
-                            saveAction()
-                            focusManager.clearFocus()
-                        } else {
-                            Toast.makeText(context, "Enter a valid start year", Toast.LENGTH_SHORT).show()
+                        viewModel.switchFinancialYear(selectedFinancialYear) {
+                            viewModel.updateProfile(profile.copy(fyLabel = selectedFinancialYear)) {}
+                            Toast.makeText(context, "Active financial year switched to $selectedFinancialYear", Toast.LENGTH_SHORT).show()
                         }
                     },
                     modifier = Modifier.fillMaxWidth().height(48.dp),
                     shape = RoundedCornerShape(8.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = AppColors.primary)
                 ) {
-                    Text("Save Alterations Settings", fontWeight = FontWeight.Bold, color = Color.White)
+                    Text("Switch Active Financial Year", fontWeight = FontWeight.Bold, color = Color.White)
+                }
+
+                OutlinedButton(
+                    onClick = {
+                        isClosingYear = true
+                        viewModel.closeFinancialYear(
+                            sourceFinancialYearCode = selectedFinancialYear,
+                            targetFinancialYearCode = nextFinancialYear,
+                            lockSourceYear = lockPreviousYear,
+                            onSuccess = { result ->
+                                isClosingYear = false
+                                Toast.makeText(
+                                    context,
+                                    "Carry forward completed to ${result.targetFinancialYearCode}",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            },
+                            onError = {
+                                isClosingYear = false
+                                Toast.makeText(context, it.message ?: "Financial year closing failed", Toast.LENGTH_LONG).show()
+                            }
+                        )
+                    },
+                    enabled = !isClosingYear,
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    if (isClosingYear) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+                    Text("Close Year & Carry Forward", fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -1368,9 +1351,10 @@ fun SettingsScreen(
                 ) { innerPadding ->
                     Box(modifier = Modifier.padding(innerPadding)) {
                         SettingsMenuSection(
+                            viewModel = viewModel,
                             activeSubMode = activeSubMode,
                             onSelect = { activeSubMode = it },
-                            createCsvLauncher = createCsvLauncher,
+                            exportCsv = exportCsv,
                             context = context,
                             navigateToProducts = navigateToProducts,
                             navigateToLedgerBooks = navigateToLedgerBooks
@@ -1400,9 +1384,10 @@ fun SettingsScreen(
             ) { innerPadding ->
                 Box(modifier = Modifier.padding(innerPadding)) {
                     SettingsMenuSection(
+                        viewModel = viewModel,
                         activeSubMode = activeSubMode,
                         onSelect = { activeSubMode = it },
-                        createCsvLauncher = createCsvLauncher,
+                        exportCsv = exportCsv,
                         context = context,
                         navigateToProducts = navigateToProducts,
                         navigateToLedgerBooks = navigateToLedgerBooks
@@ -1417,9 +1402,10 @@ fun SettingsScreen(
 
 @Composable
 fun SettingsMenuSection(
+    viewModel: AppViewModel,
     activeSubMode: String,
     onSelect: (String) -> Unit,
-    createCsvLauncher: androidx.activity.result.ActivityResultLauncher<String>,
+    exportCsv: () -> Unit,
     context: android.content.Context,
     navigateToProducts: () -> Unit,
     navigateToLedgerBooks: () -> Unit
@@ -1506,7 +1492,7 @@ fun SettingsMenuSection(
                 ) {
                     Button(
                         onClick = {
-                            createCsvLauncher.launch("ZeroBook_Ledger.csv")
+                            exportCsv()
                         },
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.weight(1f),
@@ -1519,12 +1505,17 @@ fun SettingsMenuSection(
                     }
                     OutlinedButton(
                         onClick = {
-                            Toast.makeText(context, "Backup recovered perfectly! Database state synchronized.", Toast.LENGTH_LONG).show()
+                            val result = viewModel.backupDatabase(context)
+                            if (result != null) {
+                                Toast.makeText(context, "Backup saved to ${result.locationLabel}", Toast.LENGTH_LONG).show()
+                            } else {
+                                Toast.makeText(context, "Backup failed", Toast.LENGTH_LONG).show()
+                            }
                         },
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("Restore Backup", fontSize = 11.sp)
+                        Text("Backup Database", fontSize = 11.sp)
                     }
                 }
             }

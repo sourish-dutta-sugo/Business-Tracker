@@ -4,23 +4,37 @@ import android.app.Application
 import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.data.*
+import com.example.data.AdditionalCharge
+import com.example.data.AppDatabase
+import com.example.data.AppRepository
+import com.example.data.BankCashTransaction
+import com.example.data.BillReceivable
+import com.example.data.BusinessProfile
+import com.example.data.FinancialYearUtils
+import com.example.data.LedgerAccount
+import com.example.data.LedgerEntry
+import com.example.data.Party
+import com.example.data.Product
+import com.example.data.ReceiptAllocation
+import com.example.data.Voucher
+import com.example.data.VoucherItem
+import com.example.data.VoucherSaveExtras
+import com.example.services.ExportStorageManager
+import com.example.services.ExportTarget
 import com.example.services.InvoiceGenerator
-import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class AppViewModel(application: Application) : AndroidViewModel(application) {
-    data class InvoicePreviewData(
-        val voucher: Voucher,
-        val items: List<VoucherItem>,
-        val charges: List<AdditionalCharge>,
-        val party: Party?,
-        val profile: BusinessProfile
-    )
-
     data class VoucherPrefillRequest(
         val voucherType: String,
         val partyId: String?,
@@ -29,8 +43,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     sealed class DbInitState {
-        object Loading : DbInitState()
-        object Success : DbInitState()
+        data object Loading : DbInitState()
+        data object Success : DbInitState()
         data class Error(val message: String) : DbInitState()
     }
 
@@ -39,104 +53,105 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val repository: AppRepository
 
     val profile: StateFlow<BusinessProfile?>
+    val availableFinancialYears: StateFlow<List<String>>
     val parties: StateFlow<List<Party>>
     val products: StateFlow<List<Product>>
     val vouchers: StateFlow<List<Voucher>>
     val ledgerEntries: StateFlow<List<LedgerEntry>>
     val transactions: StateFlow<List<BankCashTransaction>>
     val receiptAllocations: StateFlow<List<ReceiptAllocation>>
-    
-    // New flows for ledgers & outstanding bills
     val ledgerAccounts: StateFlow<List<LedgerAccount>>
     val billsReceivable: StateFlow<List<BillReceivable>>
 
-    // Current setup status
     val isSetupCompleted = MutableStateFlow(false)
-    val financialYear = MutableStateFlow("2025-26")
+    val financialYear = MutableStateFlow(FinancialYearUtils.currentFinancialYearCode())
     val voucherPrefillRequest = MutableStateFlow<VoucherPrefillRequest?>(null)
 
     init {
-        var tempRepo: AppRepository? = null
-        try {
+        val tempRepo = try {
             val db = AppDatabase.getDatabase(application)
-            // Force write/read query to ensure SQLite tables are successfully built/open
             db.openHelper.writableDatabase
-            tempRepo = AppRepository(db)
             dbInitState.value = DbInitState.Success
+            AppRepository(db)
         } catch (e: Exception) {
             e.printStackTrace()
             dbInitState.value = DbInitState.Error(e.localizedMessage ?: "Failed to initialize SQLite Database.")
-            val db = AppDatabase.getDatabase(application)
-            tempRepo = AppRepository(db)
+            AppRepository(AppDatabase.getDatabase(application))
         }
-
         repository = tempRepo
 
         profile = repository.profile.stateIn(
             scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
+            started = SharingStarted.WhileSubscribed(5_000),
             initialValue = null
         )
 
-        parties = repository.parties.stateIn(
+        availableFinancialYears = repository.observeAvailableFinancialYearCodes().stateIn(
             scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = FinancialYearUtils.buildGeneratedYears()
+        )
+
+        parties = financialYear.flatMapLatest(repository::observeParties).stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
             initialValue = emptyList()
         )
 
-        products = repository.products.stateIn(
+        products = financialYear.flatMapLatest(repository::observeProducts).stateIn(
             scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
+            started = SharingStarted.WhileSubscribed(5_000),
             initialValue = emptyList()
         )
 
-        vouchers = repository.vouchers.stateIn(
+        vouchers = financialYear.flatMapLatest(repository::observeVouchers).stateIn(
             scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
+            started = SharingStarted.WhileSubscribed(5_000),
             initialValue = emptyList()
         )
 
-        ledgerEntries = repository.ledgerEntries.stateIn(
+        ledgerEntries = financialYear.flatMapLatest(repository::observeLedgerEntries).stateIn(
             scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
+            started = SharingStarted.WhileSubscribed(5_000),
             initialValue = emptyList()
         )
 
-        transactions = repository.allTransactions.stateIn(
+        transactions = financialYear.flatMapLatest(repository::observeTransactions).stateIn(
             scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
+            started = SharingStarted.WhileSubscribed(5_000),
             initialValue = emptyList()
         )
 
-        receiptAllocations = repository.receiptAllocations.stateIn(
+        receiptAllocations = financialYear.flatMapLatest(repository::observeReceiptAllocations).stateIn(
             scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
+            started = SharingStarted.WhileSubscribed(5_000),
             initialValue = emptyList()
         )
 
-        ledgerAccounts = repository.ledgerAccounts.stateIn(
+        ledgerAccounts = financialYear.flatMapLatest(repository::observeLedgerAccounts).stateIn(
             scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
+            started = SharingStarted.WhileSubscribed(5_000),
             initialValue = emptyList()
         )
 
-        billsReceivable = repository.billsReceivable.stateIn(
+        billsReceivable = financialYear.flatMapLatest(repository::observeBillsReceivable).stateIn(
             scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
+            started = SharingStarted.WhileSubscribed(5_000),
             initialValue = emptyList()
         )
 
-        // Seed standard Tally-prime ledgers if empty
-        viewModelScope.launch {
-            repository.seedLedgersIfEmpty()
-        }
+        if (dbInitState.value is DbInitState.Success) {
+            viewModelScope.launch {
+                repository.seedLedgersIfEmpty()
+                repository.ensureFinancialYearExists(financialYear.value)
+            }
 
-        // Monitor if profile exists to lock/unlock Setup screen
-        viewModelScope.launch {
-            repository.profile.collect { prof ->
-                isSetupCompleted.value = prof != null
-                prof?.fyLabel?.takeIf { it.isNotBlank() }?.let { savedFy ->
-                    financialYear.value = savedFy
+            viewModelScope.launch {
+                repository.profile.collect { prof ->
+                    isSetupCompleted.value = prof != null
+                    val resolvedFy = prof?.fyLabel?.takeIf { it.isNotBlank() } ?: FinancialYearUtils.currentFinancialYearCode()
+                    financialYear.value = resolvedFy
+                    repository.ensureFinancialYearExists(resolvedFy)
                 }
             }
         }
@@ -144,13 +159,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun insertAllocation(allocation: ReceiptAllocation) {
         viewModelScope.launch {
-            repository.insertAllocation(allocation)
+            repository.insertAllocation(allocation.copy(financialYearCode = financialYear.value))
         }
     }
 
     fun insertLedgerAccount(account: LedgerAccount) {
         viewModelScope.launch {
-            repository.insertLedgerAccount(account)
+            repository.insertLedgerAccount(account, financialYear.value)
         }
     }
 
@@ -160,10 +175,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // Business Profile Operations
     fun saveProfile(profile: BusinessProfile, onSuccess: () -> Unit) {
         viewModelScope.launch {
-            repository.insertProfile(profile)
+            repository.insertProfile(profile.copy(fyLabel = financialYear.value))
             isSetupCompleted.value = true
             onSuccess()
         }
@@ -176,17 +190,23 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // Parties Operations
-    fun saveParty(party: Party, onSuccess: () -> Unit) {
+    fun switchFinancialYear(financialYearCode: String, onSuccess: () -> Unit = {}) {
         viewModelScope.launch {
-            repository.insertParty(party)
+            repository.ensureFinancialYearExists(financialYearCode)
+            financialYear.value = financialYearCode
+            profile.value?.let { repository.insertProfile(it.copy(fyLabel = financialYearCode)) }
             onSuccess()
         }
     }
 
-    fun getPartyById(partyId: String): Party? {
-        return parties.value.find { it.id == partyId }
+    fun saveParty(party: Party, onSuccess: () -> Unit) {
+        viewModelScope.launch {
+            repository.insertParty(party, financialYear.value)
+            onSuccess()
+        }
     }
+
+    fun getPartyById(partyId: String): Party? = parties.value.find { it.id == partyId }
 
     fun deleteParty(partyId: String) {
         viewModelScope.launch {
@@ -194,10 +214,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // Products Operations
     fun saveProduct(product: Product, onSuccess: () -> Unit) {
         viewModelScope.launch {
-            repository.insertProduct(product)
+            repository.insertProduct(product, financialYear.value)
             onSuccess()
         }
     }
@@ -208,16 +227,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // Dynamic voucher numbering generator
-    suspend fun generateNextVoucherNo(type: String, timestamp: Long): String {
-        return repository.generateNextVoucherNo(type, timestamp)
-    }
+    suspend fun generateNextVoucherNo(type: String, timestamp: Long): String =
+        repository.generateNextVoucherNo(type, timestamp)
 
-    suspend fun getVoucherSaveExtras(voucherId: String): VoucherSaveExtras {
-        return repository.getVoucherSaveExtras(voucherId)
-    }
+    suspend fun getVoucherSaveExtras(voucherId: String): VoucherSaveExtras =
+        repository.getVoucherSaveExtras(voucherId)
 
-    // Voucher Operations
     fun saveVoucher(
         voucher: Voucher,
         items: List<VoucherItem>,
@@ -226,8 +241,31 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         onSuccess: () -> Unit
     ) {
         viewModelScope.launch {
-            repository.saveAndPostVoucher(voucher, items, partyName, extras)
+            repository.saveAndPostVoucher(
+                voucher = voucher.copy(financialYearCode = financialYear.value),
+                items = items.map { it.copy(financialYearCode = financialYear.value) },
+                partyName = partyName,
+                extras = extras
+            )
             onSuccess()
+        }
+    }
+
+    fun closeFinancialYear(
+        sourceFinancialYearCode: String,
+        targetFinancialYearCode: String = FinancialYearUtils.nextFinancialYear(sourceFinancialYearCode),
+        lockSourceYear: Boolean,
+        onSuccess: (AppRepository.FinancialYearCloseResult) -> Unit,
+        onError: (Throwable) -> Unit
+    ) {
+        viewModelScope.launch {
+            runCatching {
+                repository.closeFinancialYear(
+                    sourceFinancialYearCode = sourceFinancialYearCode,
+                    targetFinancialYearCode = targetFinancialYearCode,
+                    lockSourceYear = lockSourceYear
+                )
+            }.onSuccess(onSuccess).onFailure(onError)
         }
     }
 
@@ -237,34 +275,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun getVoucherById(voucherId: String): Voucher? {
-        return vouchers.value.find { it.id == voucherId }
-    }
+    fun getVoucherById(voucherId: String): Voucher? = vouchers.value.find { it.id == voucherId }
 
-    fun getItemsForVoucher(voucherId: String): Flow<List<VoucherItem>> {
-        return repository.getItemsForVoucher(voucherId)
-    }
+    fun getItemsForVoucher(voucherId: String) = repository.getItemsForVoucher(voucherId)
 
-    suspend fun getInvoicePreviewData(voucherId: String): InvoicePreviewData? {
-        val voucher = repository.getVoucherById(voucherId) ?: return null
-        val profile = repository.getProfileSync() ?: return null
-        val items = repository.getItemsForVoucherSync(voucherId)
-        val party = voucher.partyId?.let { repository.getPartyById(it) }
-        val charges = InvoiceGenerator.parseAdditionalCharges(voucher.additionalChargesJson)
-        InvoiceGenerator.primeVoucherRenderExtras(getApplication(), voucherId)
-        return InvoicePreviewData(
-            voucher = voucher,
-            items = items,
-            charges = charges,
-            party = party,
-            profile = profile
-        )
-    }
+    suspend fun getInvoiceRenderBundle(voucherId: String): InvoiceGenerator.InvoiceRenderBundle? =
+        InvoiceGenerator.buildRenderBundle(getApplication(), voucherId)
 
-    // Manual Transactions (Bank / Cash)
     fun saveTransaction(tx: BankCashTransaction, onSuccess: () -> Unit) {
         viewModelScope.launch {
-            repository.saveBankCashTransaction(tx)
+            repository.saveBankCashTransaction(tx.copy(financialYearCode = financialYear.value))
             onSuccess()
         }
     }
@@ -279,25 +299,23 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         voucherPrefillRequest.value = request
     }
 
-    // Populate Sample Data
     fun loadSampleData() {
         viewModelScope.launch {
             repository.insertSampleData()
         }
     }
 
-    // Backup & Restore Database File
-    fun backupDatabase(context: Context): File? {
+    fun backupDatabase(context: Context): ExportStorageManager.ExportResult? {
         return try {
             val dbFile = context.getDatabasePath("ZeroBook.db")
             if (dbFile.exists()) {
-                val backupFile = File(context.cacheDir, "ZeroBook_Backup.db")
-                FileInputStream(dbFile).use { input ->
-                    FileOutputStream(backupFile).use { output ->
-                        input.copyTo(output)
-                    }
-                }
-                backupFile
+                ExportStorageManager.exportFile(
+                    context = context,
+                    sourceFile = dbFile,
+                    displayName = "ZeroBook_Backup_${System.currentTimeMillis()}.db",
+                    mimeType = "application/octet-stream",
+                    target = ExportTarget.Backups
+                )
             } else {
                 null
             }
@@ -323,29 +341,28 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // Smart lookups for PIN, IFSC, and GSTIN
     fun fetchPinCodeDetails(pincode: String, onResult: (city: String?, state: String?) -> Unit) {
-        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+        viewModelScope.launch(Dispatchers.IO) {
             try {
                 val url = java.net.URL("https://api.postalpincode.in/pincode/$pincode")
                 val connection = url.openConnection() as java.net.HttpURLConnection
                 connection.requestMethod = "GET"
                 connection.connectTimeout = 5000
                 connection.readTimeout = 5000
-                
+
                 val responseText = connection.inputStream.bufferedReader().use { it.readText() }
                 val districtRegex = """"District"\s*:\s*"([^"]+)"""".toRegex()
                 val stateRegex = """"State"\s*:\s*"([^"]+)"""".toRegex()
-                
+
                 val district = districtRegex.find(responseText)?.groupValues?.get(1)
                 val state = stateRegex.find(responseText)?.groupValues?.get(1)
-                
-                viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+
+                viewModelScope.launch(Dispatchers.Main) {
                     onResult(district, state)
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
-                viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                viewModelScope.launch(Dispatchers.Main) {
                     onResult(null, null)
                 }
             }
@@ -353,26 +370,26 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun fetchIfscDetails(ifsc: String, onResult: (bankName: String?, branchName: String?) -> Unit) {
-        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+        viewModelScope.launch(Dispatchers.IO) {
             try {
                 val url = java.net.URL("https://ifsc.razorpay.com/$ifsc")
                 val connection = url.openConnection() as java.net.HttpURLConnection
                 connection.requestMethod = "GET"
                 connection.connectTimeout = 5000
                 connection.readTimeout = 5000
-                
+
                 val responseText = connection.inputStream.bufferedReader().use { it.readText() }
                 val bankRegex = """"BANK"\s*:\s*"([^"]+)"""".toRegex()
                 val branchRegex = """"BRANCH"\s*:\s*"([^"]+)"""".toRegex()
                 val bank = bankRegex.find(responseText)?.groupValues?.get(1)
                 val branch = branchRegex.find(responseText)?.groupValues?.get(1)
-                
-                viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+
+                viewModelScope.launch(Dispatchers.Main) {
                     onResult(bank, branch)
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
-                viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                viewModelScope.launch(Dispatchers.Main) {
                     onResult(null, null)
                 }
             }
@@ -380,28 +397,29 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun fetchGstinDetails(gstin: String, onResult: (tradeName: String?, legalName: String?) -> Unit) {
-        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+        viewModelScope.launch(Dispatchers.IO) {
             try {
                 val url = java.net.URL("https://api.copreco.com/gstin/$gstin")
                 val connection = url.openConnection() as java.net.HttpURLConnection
                 connection.requestMethod = "GET"
                 connection.connectTimeout = 5000
                 connection.readTimeout = 5000
-                
+
                 val responseText = connection.inputStream.bufferedReader().use { it.readText() }
                 val tradeNameRegex = """"tradeNam"\s*:\s*"([^"]+)"""".toRegex()
                 val legalNameRegex = """"lgnm"\s*:\s*"([^"]+)"""".toRegex()
                 val legalNameAltRegex = """"legalName"\s*:\s*"([^"]+)"""".toRegex()
-                
+
                 val trade = tradeNameRegex.find(responseText)?.groupValues?.get(1)
-                val legal = legalNameRegex.find(responseText)?.groupValues?.get(1) ?: legalNameAltRegex.find(responseText)?.groupValues?.get(1)
-                
-                viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                val legal = legalNameRegex.find(responseText)?.groupValues?.get(1)
+                    ?: legalNameAltRegex.find(responseText)?.groupValues?.get(1)
+
+                viewModelScope.launch(Dispatchers.Main) {
                     onResult(trade, legal)
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
-                viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                viewModelScope.launch(Dispatchers.Main) {
                     onResult(null, null)
                 }
             }

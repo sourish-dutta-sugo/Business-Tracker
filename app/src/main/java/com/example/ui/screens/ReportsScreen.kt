@@ -1,8 +1,6 @@
 package com.example.ui.screens
 
 import android.content.Context
-import android.content.Intent
-import android.net.Uri
 import android.widget.Toast
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
@@ -32,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.*
 import com.example.ui.AppViewModel
+import com.example.services.EmailComposer
 import com.example.ui.theme.Colors
 import com.example.ui.theme.*
 import androidx.compose.foundation.text.KeyboardOptions
@@ -1613,18 +1612,15 @@ $bName
 Phone: ${profile?.phone ?: ""}
 """.trimIndent()
 
-    val intent = Intent(Intent.ACTION_SENDTO).apply {
-        data = Uri.parse("mailto:")
-        putExtra(Intent.EXTRA_EMAIL, arrayOf(party.email))
-        putExtra(Intent.EXTRA_SUBJECT, subject)
-        putExtra(Intent.EXTRA_TEXT, emailText)
-    }
-
-    try {
-        context.startActivity(Intent.createChooser(intent, "Select Email application Client..."))
-    } catch (e: Exception) {
-        Toast.makeText(context, "No email client application found on this terminal device.", Toast.LENGTH_LONG).show()
-    }
+    EmailComposer.compose(
+        context = context,
+        draft = EmailComposer.Draft(
+            recipients = listOf(party.email),
+            subject = subject,
+            body = emailText
+        ),
+        chooserTitle = "Send Reminder Email"
+    )
 }
 
 // ═══════════════════════════════════════════════════════

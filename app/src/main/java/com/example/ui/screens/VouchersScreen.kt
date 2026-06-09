@@ -2840,39 +2840,6 @@ fun NewVoucherScreen(
         )
     }
 
-    val createPdfLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/pdf")
-    ) { uri ->
-        if (uri != null) {
-            val savedVoucherId = printedVoucherId
-            if (savedVoucherId.isNullOrBlank()) {
-                android.widget.Toast.makeText(context, "Saved invoice not found", android.widget.Toast.LENGTH_SHORT).show()
-                onNavigateBack()
-            } else {
-                InvoiceGenerator.generatePdfFromVoucherId(context, savedVoucherId) { pdfFile, _ ->
-                    try {
-                        if (pdfFile != null) {
-                            context.contentResolver.openOutputStream(uri)?.use { output ->
-                                pdfFile.inputStream().use { input ->
-                                    input.copyTo(output)
-                                }
-                            }
-                            android.widget.Toast.makeText(context, "PDF saved successfully", android.widget.Toast.LENGTH_SHORT).show()
-                        } else {
-                            android.widget.Toast.makeText(context, "Failed to save PDF", android.widget.Toast.LENGTH_SHORT).show()
-                        }
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                        android.widget.Toast.makeText(context, "Failed to save PDF", android.widget.Toast.LENGTH_SHORT).show()
-                    }
-                    onNavigateBack()
-                }
-            }
-        } else {
-            onNavigateBack()
-        }
-    }
-
     // Direct Receipt Thermal-style Print Dialog
     if (showPrintReceiptDialog) {
         val sdf = SimpleDateFormat("dd-MMM-yyyy hh:mm a", Locale.getDefault())
@@ -3123,7 +3090,32 @@ fun NewVoucherScreen(
                     Button(
                         onClick = {
                             showPrintReceiptDialog = false
-                            createPdfLauncher.launch("Invoice_${voucherNo.replace("/", "_")}.pdf")
+                            coroutineScope.launch {
+                                val savedVoucherId = printedVoucherId
+                                if (savedVoucherId.isNullOrBlank()) {
+                                    android.widget.Toast.makeText(context, "Saved invoice not found", android.widget.Toast.LENGTH_SHORT).show()
+                                    onNavigateBack()
+                                    return@launch
+                                }
+                                runCatching {
+                                    val bundle = viewModel.getInvoiceRenderBundle(savedVoucherId)
+                                        ?: error("Failed to load latest invoice data")
+                                    val pdfFile = InvoiceGenerator.renderBundleToPdf(context, bundle)
+                                    val result = com.example.services.exportInvoicePdf(context, pdfFile)
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        "Saved ${result.fileName} to ${result.locationLabel}",
+                                        android.widget.Toast.LENGTH_LONG
+                                    ).show()
+                                }.onFailure {
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        it.message ?: "Failed to save PDF",
+                                        android.widget.Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                                onNavigateBack()
+                            }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = AppColors.primary)
                     ) {
@@ -3134,23 +3126,25 @@ fun NewVoucherScreen(
                     Button(
                         onClick = {
                             showPrintReceiptDialog = false
-                            try {
+                            coroutineScope.launch {
                                 val savedVoucherId = printedVoucherId
                                 if (savedVoucherId.isNullOrBlank()) {
                                     android.widget.Toast.makeText(context, "Saved invoice not found", android.widget.Toast.LENGTH_SHORT).show()
-                                } else {
-                                    InvoiceGenerator.generatePdfFromVoucherId(context, savedVoucherId) { pdfFile, _ ->
-                                        if (pdfFile != null) {
-                                            com.example.services.shareInvoicePdfToWhatsApp(context, pdfFile)
-                                        } else {
-                                            android.widget.Toast.makeText(context, "Failed to generate PDF", android.widget.Toast.LENGTH_SHORT).show()
-                                        }
-                                        onNavigateBack()
-                                    }
+                                    onNavigateBack()
+                                    return@launch
                                 }
-                            } catch (e: Exception) {
-                                e.printStackTrace()
-                                android.widget.Toast.makeText(context, "Failed to share PDF", android.widget.Toast.LENGTH_SHORT).show()
+                                runCatching {
+                                    val bundle = viewModel.getInvoiceRenderBundle(savedVoucherId)
+                                        ?: error("Failed to load latest invoice data")
+                                    val pdfFile = InvoiceGenerator.renderBundleToPdf(context, bundle)
+                                    com.example.services.shareInvoicePdfToWhatsApp(context, pdfFile)
+                                }.onFailure {
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        it.message ?: "Failed to share PDF",
+                                        android.widget.Toast.LENGTH_LONG
+                                    ).show()
+                                }
                                 onNavigateBack()
                             }
                         },
