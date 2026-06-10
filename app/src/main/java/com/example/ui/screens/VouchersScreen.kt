@@ -50,8 +50,13 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import com.example.data.*
+import com.example.data.EmailReminderScheduler
 import com.example.services.InvoiceGenerator
+import com.example.services.configureInvoiceWebView
 import com.example.ui.AppViewModel
 import com.example.ui.theme.AppColors
 import com.example.ui.theme.Colors
@@ -743,6 +748,12 @@ fun NewVoucherScreen(
     var transportLrNo by remember { mutableStateOf("") }
     var transportGstin by remember { mutableStateOf("") }
     var transportDestination by remember { mutableStateOf("") }
+    var saleReferenceNo by remember { mutableStateOf("") }
+    var saleOtherReferences by remember { mutableStateOf("") }
+    var showAdvanceReceiptEmailDialog by remember { mutableStateOf(false) }
+    var pendingAdvanceReceiptVoucherId by remember { mutableStateOf<String?>(null) }
+    var pendingAdvanceReceiptEmail by remember { mutableStateOf("") }
+    var pendingAfterSaveAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     
     // Line items
     val lineItems = remember { mutableStateListOf<VoucherItem>() }
@@ -780,6 +791,9 @@ fun NewVoucherScreen(
                 creditDueDateText = extras.creditDueDate
                 isAdvanceReceipt = extras.isAdvance
                 advanceForText = extras.advanceFor
+                val (referenceNo, otherReferences) = viewModel.getSaleVoucherReferenceFields(voucherId)
+                saleReferenceNo = referenceNo
+                saleOtherReferences = otherReferences
                 
                 val items = viewModel.getItemsForVoucher(voucherId).firstOrNull()
                 if (items != null) {
@@ -904,12 +918,19 @@ fun NewVoucherScreen(
 
     fun Double?.orEmptyBalance(): Double = this ?: 0.0
 
+    fun parseDueDateInput(value: String): Long? {
+        value.toLongOrNull()?.let { return it }
+        return runCatching {
+            SimpleDateFormat("dd-MMM-yyyy", Locale.ENGLISH).parse(value)?.time
+        }.getOrNull()
+    }
+
     fun showDatePicker(
         currentValue: String,
         onDateSelected: (Long) -> Unit
     ) {
         val baseCalendar = Calendar.getInstance().apply {
-            currentValue.toLongOrNull()?.let { timeInMillis = it }
+            parseDueDateInput(currentValue)?.let { timeInMillis = it }
         }
         DatePickerDialog(
             context,
@@ -1121,6 +1142,7 @@ fun NewVoucherScreen(
                 vehicleNo = transportVehicle,
                 transportGstin = transportGstin,
                 destination = transportDestination,
+                referenceNo = if (selectedType in setOf("SALE", "PURCHASE", "RECEIPT", "PAYMENT")) saleReferenceNo else "",
                 paymentMode = paymentMode,
                 chequeNo = if (paymentMode == "CHEQUE") chequeNo else null,
                 chequeDate = if (paymentMode == "CHEQUE") chequeDate else null,
@@ -1150,9 +1172,31 @@ fun NewVoucherScreen(
                     creditDueDate = creditDueDateText,
                     remainingCreditAmount = remainingCreditAmount,
                     isAdvance = selectedType == "RECEIPT" && isAdvanceReceipt,
-                    advanceFor = advanceForText
+                    advanceFor = advanceForText,
+                    referenceNo = saleReferenceNo,
+                    otherReferences = saleOtherReferences
                 )
             ) {
+                val completeSaveFlow = {
+                    if (shouldPrint) {
+                        printedVoucherId = finalId
+                        showPrintReceiptDialog = true
+                    } else if (selectedType == "SALE" || isEditMode) {
+                        onNavigateToInvoice(finalId)
+                    } else {
+                        onNavigateBack()
+                    }
+                }
+                if (selectedType in setOf("SALE", "PURCHASE", "RECEIPT", "PAYMENT")) {
+                    viewModel.syncSaleVoucherReferenceFields(finalId, saleReferenceNo, saleOtherReferences)
+                }
+                if (
+                    selectedType == "SALE" &&
+                    paymentMode in listOf("CREDIT", "PART PAYMENT") &&
+                    creditDueDateText.isNotBlank()
+                ) {
+                    viewModel.scheduleDueReminder(finalId, creditDueDateText)
+                }
                 if (selectedType == "RECEIPT" || selectedType == "PAYMENT") {
                     var remainingAllocation = netAmount.value
                     pendingInvoices
@@ -1175,15 +1219,71 @@ fun NewVoucherScreen(
                             }
                         }
                 }
-                if (shouldPrint) {
-                    printedVoucherId = finalId
-                    showPrintReceiptDialog = true
-                } else if (selectedType == "SALE" || isEditMode) {
-                    onNavigateToInvoice(finalId)
+                if (
+                    selectedType == "RECEIPT" &&
+                    isAdvanceReceipt &&
+                    !selectedParty?.email.isNullOrBlank()
+                ) {
+                    pendingAdvanceReceiptVoucherId = finalId
+                    pendingAdvanceReceiptEmail = selectedParty?.email.orEmpty()
+                    pendingAfterSaveAction = completeSaveFlow
+                    showAdvanceReceiptEmailDialog = true
                 } else {
-                    onNavigateBack()
+                    completeSaveFlow()
                 }
             }
+    }
+
+    if (showAdvanceReceiptEmailDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                showAdvanceReceiptEmailDialog = false
+                pendingAfterSaveAction?.invoke()
+                pendingAfterSaveAction = null
+            },
+            title = { Text("Send advance receipt") },
+            text = { Text("Send advance receipt to ${pendingAdvanceReceiptEmail}?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val receiptVoucherId = pendingAdvanceReceiptVoucherId
+                        val recipient = pendingAdvanceReceiptEmail
+                        showAdvanceReceiptEmailDialog = false
+                        if (!receiptVoucherId.isNullOrBlank() && recipient.isNotBlank()) {
+                            coroutineScope.launch {
+                                runCatching {
+                                    val bundle = viewModel.getInvoiceRenderBundle(receiptVoucherId)
+                                    if (bundle != null) {
+                                        val pdfFile = InvoiceGenerator.renderBundleToPdf(context, bundle)
+                                        InvoiceGenerator.emailInvoicePdf(
+                                            context = context,
+                                            pdfFile = pdfFile,
+                                            recipient = recipient,
+                                            subject = "Advance Receipt - ${bundle.document.invoiceNumber}",
+                                            body = "Please find attached the advance receipt ${bundle.document.invoiceNumber} from ${bundle.document.business.businessName}."
+                                        )
+                                    }
+                                }
+                                pendingAfterSaveAction?.invoke()
+                                pendingAfterSaveAction = null
+                            }
+                        } else {
+                            pendingAfterSaveAction?.invoke()
+                            pendingAfterSaveAction = null
+                        }
+                    }
+                ) { Text("Yes") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showAdvanceReceiptEmailDialog = false
+                        pendingAfterSaveAction?.invoke()
+                        pendingAfterSaveAction = null
+                    }
+                ) { Text("No") }
+            }
+        )
     }
 
     if (step == 1) {
@@ -1815,7 +1915,7 @@ fun NewVoucherScreen(
                                                 OutlinedTextField(
                                                     value = if (item.qty == 0.0) "" else item.qty.toString(),
                                                     onValueChange = { qtyText ->
-                                                        val parsedQty = qtyText.toDoubleOrNull() ?: 0.0
+                                                        val parsedQty = filterDecimalInput(qtyText).toDoubleOrNull() ?: 0.0
                                                         val newQty = parsedQty.coerceIn(0.0, originalItem.qty)
                                                         val ratio = if (originalItem.qty <= 0.0) 0.0 else newQty / originalItem.qty
                                                         lineItems[index] = item.copy(
@@ -1972,7 +2072,14 @@ fun NewVoucherScreen(
                                 setDirectAmount(valueDouble)
                             },
                             label = if (selectedType == "RECEIPT" && isAdvanceReceipt) "Advance Amount (₹) *" else "Amount (₹) *",
-                            modifier = Modifier.fillMaxWidth().testTag("direct_amount_input"),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("direct_amount_input")
+                                .onFocusChanged { focusState ->
+                                    if (!focusState.isFocused && netAmount.value == 0.0) {
+                                        setDirectAmount(0.0)
+                                    }
+                                },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
                         )
                         if ((selectedType == "RECEIPT" && !isAdvanceReceipt) || selectedType == "PAYMENT") {
@@ -1997,6 +2104,31 @@ fun NewVoucherScreen(
                                 else -> Color(0xFF1A73E8)
                             }
                             Text(statusText, color = statusColor, fontWeight = FontWeight.Medium, fontSize = 12.sp)
+                        }
+                    }
+                }
+
+                if (selectedType in setOf("SALE", "PURCHASE", "RECEIPT", "PAYMENT")) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = AppColors.cardBg),
+                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text("References", fontWeight = FontWeight.Bold, color = AppColors.textPrimary)
+                            RetailTextField(
+                                value = saleReferenceNo,
+                                onValueChange = { saleReferenceNo = it },
+                                label = "Reference No. & Date",
+                                placeholder = "e.g. PO number or order reference"
+                            )
+                            RetailTextField(
+                                value = saleOtherReferences,
+                                onValueChange = { saleOtherReferences = it },
+                                label = "Other References",
+                                placeholder = "Any other reference"
+                            )
                         }
                     }
                 }
@@ -2132,8 +2264,17 @@ fun NewVoucherScreen(
                             Text("Part Payment Details", fontWeight = FontWeight.Bold, color = AppColors.textPrimary)
                             RetailTextField(
                                 value = partialAmountPaidText,
-                                onValueChange = { partialAmountPaidText = it },
+                                onValueChange = { partialAmountPaidText = filterDecimalInput(it) },
                                 label = "Amount Paid Now",
+                                modifier = Modifier.onFocusChanged { focusState ->
+                                    if (focusState.isFocused) {
+                                        if (partialAmountPaidText == "0" || partialAmountPaidText == "0.0" || partialAmountPaidText == "0.00") {
+                                            partialAmountPaidText = ""
+                                        }
+                                    } else if (partialAmountPaidText.isBlank()) {
+                                        partialAmountPaidText = "0"
+                                    }
+                                },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
                             )
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -2155,7 +2296,7 @@ fun NewVoucherScreen(
                                     .fillMaxWidth()
                                     .clickable {
                                         showDatePicker(creditDueDateText) { selectedMillis ->
-                                            creditDueDateText = selectedMillis.toString()
+                                            creditDueDateText = SimpleDateFormat("dd-MMM-yyyy", Locale.ENGLISH).format(Date(selectedMillis))
                                         }
                                     },
                                 shape = RoundedCornerShape(12.dp),
@@ -2165,7 +2306,7 @@ fun NewVoucherScreen(
                                 Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
                                     Text("Credit due date for remaining amount", fontSize = 11.sp, color = AppColors.textSecondary)
                                     Text(
-                                        text = creditDueDateText.toLongOrNull()?.let { Utils.formatDate(it) } ?: "Select optional due date",
+                                        text = creditDueDateText.ifBlank { "Select optional due date" },
                                         color = AppColors.textPrimary,
                                         fontWeight = FontWeight.Medium
                                     )
@@ -2181,7 +2322,7 @@ fun NewVoucherScreen(
                                     .fillMaxWidth()
                                     .clickable {
                                         showDatePicker(creditDueDateText) { selectedMillis ->
-                                            creditDueDateText = selectedMillis.toString()
+                                            creditDueDateText = SimpleDateFormat("dd-MMM-yyyy", Locale.ENGLISH).format(Date(selectedMillis))
                                         }
                                     },
                                 shape = RoundedCornerShape(12.dp),
@@ -2191,7 +2332,7 @@ fun NewVoucherScreen(
                                 Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
                                     Text("Due Date", fontSize = 11.sp, color = AppColors.textSecondary)
                                     Text(
-                                        text = creditDueDateText.toLongOrNull()?.let { Utils.formatDate(it) } ?: "Select optional due date",
+                                        text = creditDueDateText.ifBlank { "Select optional due date" },
                                         color = AppColors.textPrimary,
                                         fontWeight = FontWeight.Medium
                                     )
@@ -2842,8 +2983,30 @@ fun NewVoucherScreen(
 
     // Direct Receipt Thermal-style Print Dialog
     if (showPrintReceiptDialog) {
-        val sdf = SimpleDateFormat("dd-MMM-yyyy hh:mm a", Locale.getDefault())
-        val dateFormatted = sdf.format(Date(voucherDate))
+        var savedInvoiceHtml by remember(printedVoucherId) { mutableStateOf<String?>(null) }
+        var savedInvoiceLoading by remember(printedVoucherId) { mutableStateOf(true) }
+        var savedInvoiceError by remember(printedVoucherId) { mutableStateOf<String?>(null) }
+
+        LaunchedEffect(printedVoucherId) {
+            val voucherId = printedVoucherId
+            savedInvoiceLoading = true
+            savedInvoiceError = null
+            savedInvoiceHtml = null
+            if (voucherId.isNullOrBlank()) {
+                savedInvoiceLoading = false
+                savedInvoiceError = "Invoice preview unavailable."
+            } else {
+                runCatching { viewModel.getInvoiceRenderBundle(voucherId)?.html }
+                    .onSuccess { html ->
+                        savedInvoiceHtml = html
+                        savedInvoiceError = if (html == null) "Invoice preview unavailable." else null
+                    }
+                    .onFailure { error ->
+                        savedInvoiceError = error.message ?: "Invoice preview unavailable."
+                    }
+                savedInvoiceLoading = false
+            }
+        }
 
         AlertDialog(
             onDismissRequest = { 
@@ -2861,7 +3024,6 @@ fun NewVoucherScreen(
                 }
             },
             text = {
-                // A beautiful visual thermal receipt design representing a physical ticket layout
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -2871,216 +3033,57 @@ fun NewVoucherScreen(
                     border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
                     tonalElevation = 4.dp
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .verticalScroll(rememberScrollState())
-                            .padding(16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = profile?.businessName?.ifBlank { "ZeroBook Ltd" } ?: "ZeroBook Ltd",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
-                            color = Color.Black
-                        )
-                        Text(
-                            text = "RECORD. TRACK. GROW.",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.Gray,
-                            letterSpacing = 1.sp
-                        )
-                        Text(
-                            text = "${profile?.address ?: "Market Link Road"}, ${profile?.city ?: "New Delhi"}",
-                            fontSize = 10.sp,
-                            color = Color.DarkGray
-                        )
-                        Text(
-                            text = "GSTIN: ${profile?.gstin ?: "07AAAAA0000A1Z5"}",
-                            fontSize = 10.sp,
-                            color = Color.DarkGray
-                        )
-                        Text(
-                            text = "Ph: ${profile?.phone ?: "9876543210"} | Email: ${profile?.email ?: "info@zerobook.in"}",
-                            fontSize = 10.sp,
-                            color = Color.DarkGray
-                        )
-
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            text = "---------------------------------------------",
-                            fontSize = 11.sp,
-                            color = Color.Gray
-                        )
-                        Text(
-                            text = "TAX INVOICE (${selectedType})",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp,
-                            color = Color.Black
-                        )
-                        Text(
-                            text = "---------------------------------------------",
-                            fontSize = 11.sp,
-                            color = Color.Gray
-                        )
-
-                        // Invoice metadata
-                        Column(
-                            verticalArrangement = Arrangement.spacedBy(2.dp),
-                            modifier = Modifier.fillMaxWidth()
+                    when {
+                        savedInvoiceLoading -> Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("Invoice No:", fontSize = 10.sp, color = Color.DarkGray, fontWeight = FontWeight.Bold)
-                                Text(voucherNo, fontSize = 10.sp, color = Color.Black)
-                            }
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("Date Time:", fontSize = 10.sp, color = Color.DarkGray)
-                                Text(dateFormatted, fontSize = 10.sp, color = Color.Black)
-                            }
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("Customer / Party:", fontSize = 10.sp, color = Color.DarkGray, fontWeight = FontWeight.Bold)
-                                Text(selectedParty?.name ?: "Cash Customer", fontSize = 10.sp, color = Color.Black)
-                            }
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("Payment Terminal:", fontSize = 10.sp, color = Color.DarkGray)
-                                Text("$paymentMode Mode", fontSize = 10.sp, color = Color.Black, fontWeight = FontWeight.Bold)
-                            }
+                            CircularProgressIndicator()
                         }
-
-                        Text(
-                            text = "---------------------------------------------",
-                            fontSize = 11.sp,
-                            color = Color.Gray
-                        )
-
-                        // Selected Items list layout on physical paper receipt
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text("ITEM DESCRIPTION", fontSize = 9.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.8f))
-                            Text("QTY", fontSize = 9.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.5f), textAlign = TextAlign.End)
-                            Text("RATE", fontSize = 9.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.8f), textAlign = TextAlign.End)
-                            Text("GST", fontSize = 9.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.5f), textAlign = TextAlign.End)
-                            Text("TOTAL", fontSize = 9.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.9f), textAlign = TextAlign.End)
-                        }
-                        Text(
-                            text = ".................................................................",
-                            fontSize = 10.sp,
-                            color = Color.Gray
-                        )
-
-                        lineItems.forEach { li ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(li.productName, fontSize = 9.sp, modifier = Modifier.weight(1.8f), color = Color.Black)
-                                Text(li.qty.toString(), fontSize = 9.sp, modifier = Modifier.weight(0.5f), textAlign = TextAlign.End, color = Color.Black)
-                                Text(Utils.formatIndianCurrency(li.rate), fontSize = 9.sp, modifier = Modifier.weight(0.8f), textAlign = TextAlign.End, color = Color.Black)
-                                Text("${li.gstRate}%", fontSize = 9.sp, modifier = Modifier.weight(0.5f), textAlign = TextAlign.End, color = Color.Black)
-                                Text(Utils.formatIndianCurrency(li.totalAmount), fontSize = 9.sp, modifier = Modifier.weight(0.9f), textAlign = TextAlign.End, color = Color.Black, fontWeight = FontWeight.Bold)
-                            }
-                        }
-
-                        Text(
-                            text = "---------------------------------------------",
-                            fontSize = 11.sp,
-                            color = Color.Gray
-                        )
-
-                        // Grand totals
-                        Column(
-                            verticalArrangement = Arrangement.spacedBy(2.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("Subtotal Taxable:", fontSize = 10.sp, color = Color.DarkGray)
-                                Text(Utils.formatIndianCurrency(taxableAmount.value), fontSize = 10.sp, color = Color.Black)
-                            }
-                            if (cgst.value > 0) {
-                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("CGST Amount:", fontSize = 10.sp, color = Color.DarkGray)
-                                    Text(Utils.formatIndianCurrency(cgst.value), fontSize = 10.sp, color = Color.Black)
+                        savedInvoiceHtml != null -> {
+                            val invoiceHtml = savedInvoiceHtml.orEmpty()
+                            AndroidView(
+                            factory = { ctx ->
+                                WebView(ctx).apply {
+                                    settings.allowFileAccess = true
+                                    settings.allowContentAccess = true
+                                    @Suppress("DEPRECATION")
+                                    settings.allowFileAccessFromFileURLs = true
+                                    @Suppress("DEPRECATION")
+                                    settings.allowUniversalAccessFromFileURLs = true
+                                    settings.javaScriptEnabled = false
+                                    settings.setSupportZoom(true)
+                                    settings.builtInZoomControls = true
+                                    settings.displayZoomControls = false
+                                    settings.loadWithOverviewMode = true
+                                    settings.useWideViewPort = true
+                                    webViewClient = WebViewClient()
                                 }
-                            }
-                            if (sgst.value > 0) {
-                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("SGST Amount:", fontSize = 10.sp, color = Color.DarkGray)
-                                    Text(Utils.formatIndianCurrency(sgst.value), fontSize = 10.sp, color = Color.Black)
-                                }
-                            }
-                            if (igst.value > 0) {
-                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("IGST Amount:", fontSize = 10.sp, color = Color.DarkGray)
-                                    Text(Utils.formatIndianCurrency(igst.value), fontSize = 10.sp, color = Color.Black)
-                                }
-                            }
-                            if (roundOff.value != 0.0) {
-                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("Rounding:", fontSize = 10.sp, color = Color.DarkGray)
-                                    Text(Utils.formatIndianCurrency(roundOff.value), fontSize = 10.sp, color = Color.Black)
-                                }
-                            }
-                            Text(
-                                text = ".................................................................",
-                                fontSize = 10.sp,
-                                color = Color.Gray
-                            )
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("NET TOTAL PAID/DUE:", fontSize = 11.sp, color = Color.Black, fontWeight = FontWeight.Bold)
-                                Text(Utils.formatIndianCurrency(netAmount.value), fontSize = 12.sp, color = Color.Black, fontWeight = FontWeight.Bold)
-                            }
-                        }
-
-                        if (paymentMode == "BANK") {
-                            Text(
-                                text = "---------------------------------------------",
-                                fontSize = 11.sp,
-                                color = Color.Gray
-                            )
-                            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                                Text("PAYMENT BANK ROUTING CREDIT:", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.Black)
-                                Text("Holder: ${bankAccountHolder.ifBlank { "Company Account" }}", fontSize = 9.sp, color = Color.DarkGray)
-                                Text("IFSC: ${bankIfsc.ifBlank { "UTIB000001" }} | Bank: ${bankNameDetail.ifBlank { "Axis Bank" }}", fontSize = 9.sp, color = Color.DarkGray)
-                            }
-                        }
-
-                        Text(
-                            text = "---------------------------------------------",
-                            fontSize = 11.sp,
-                            color = Color.Gray
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Thank you for doing business with us!",
-                            fontSize = 9.sp,
-                            fontStyle = FontStyle.Italic,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.Black
-                        )
-                        Text(
-                            text = "Powered by ZeroBook Terminal",
-                            fontSize = 8.sp,
-                            color = Color.Gray
-                        )
-
-                        val signaturePath = profile?.signaturePath
-                        if (signaturePath != null && java.io.File(signaturePath).exists()) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text("Authorized Signature:", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.Black)
-                            val sigBitmap = android.graphics.BitmapFactory.decodeFile(signaturePath)
-                            if (sigBitmap != null) {
-                                Image(
-                                    bitmap = sigBitmap.asImageBitmap(),
-                                    contentDescription = "Signature Trace Printout",
-                                    modifier = Modifier
-                                        .height(45.dp)
-                                        .width(110.dp)
-                                        .background(Color.White)
+                            },
+                            update = { webView ->
+                                webView.loadDataWithBaseURL(
+                                    "file:///",
+                                    invoiceHtml,
+                                    "text/html",
+                                    "UTF-8",
+                                    null
                                 )
-                            }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(420.dp)
+                        )
+                        }
+                        else -> Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(16.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = savedInvoiceError ?: "Invoice preview unavailable.",
+                                color = AppColors.textSecondary
+                            )
                         }
                     }
                 }
@@ -3588,7 +3591,17 @@ fun NewVoucherScreen(
                             onValueChange = { newProdSaleRate = filterDecimalInput(it) },
                             label = "Sale Rate (₹) *",
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier
+                                .weight(1f)
+                                .onFocusChanged { focusState ->
+                                    if (focusState.isFocused) {
+                                        if (newProdSaleRate == "0" || newProdSaleRate == "0.0" || newProdSaleRate == "0.00") {
+                                            newProdSaleRate = ""
+                                        }
+                                    } else if (newProdSaleRate.isBlank()) {
+                                        newProdSaleRate = "0"
+                                    }
+                                }
                         )
 
                         RetailTextField(
@@ -3596,7 +3609,17 @@ fun NewVoucherScreen(
                             onValueChange = { newProdPurchaseRate = filterDecimalInput(it) },
                             label = "Purchase Rate (₹) *",
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier
+                                .weight(1f)
+                                .onFocusChanged { focusState ->
+                                    if (focusState.isFocused) {
+                                        if (newProdPurchaseRate == "0" || newProdPurchaseRate == "0.0" || newProdPurchaseRate == "0.00") {
+                                            newProdPurchaseRate = ""
+                                        }
+                                    } else if (newProdPurchaseRate.isBlank()) {
+                                        newProdPurchaseRate = "0"
+                                    }
+                                }
                         )
                     }
                 }
@@ -3689,7 +3712,72 @@ fun LiveInvoicePreview(
     netAmount: Double,
     selectedType: String
 ) {
-    val scrollState = rememberScrollState()
+    val context = LocalContext.current
+    val previewBusiness = profile ?: BusinessProfile(
+        businessName = "ZeroBook Business",
+        ownerName = "",
+        address = "",
+        city = "",
+        state = "",
+        pin = "",
+        phone = "",
+        email = "",
+        gstin = "",
+        pan = "",
+        stateCode = "",
+        bankName = "",
+        accountNo = "",
+        ifsc = ""
+    )
+    val previewVoucher = remember(
+        voucherNo,
+        voucherDate,
+        paymentMode,
+        selectedType,
+        taxableAmount,
+        cgst,
+        sgst,
+        igst,
+        roundOff,
+        netAmount,
+        party
+    ) {
+        Voucher(
+            id = "preview-$voucherNo",
+            voucherNo = voucherNo,
+            type = selectedType,
+            date = voucherDate,
+            partyId = party?.id,
+            narration = "",
+            taxableAmount = taxableAmount,
+            cgst = cgst,
+            sgst = sgst,
+            igst = igst,
+            roundOff = roundOff,
+            netAmount = netAmount,
+            paymentMode = paymentMode,
+            chequeNo = null,
+            chequeDate = null,
+            bankName = null,
+            isIgst = igst > 0.0,
+            status = "DRAFT"
+        )
+    }
+    val html = remember(
+        previewVoucher,
+        lineItems,
+        previewBusiness,
+        party,
+        additionalCharges
+    ) {
+        InvoiceGenerator.buildInvoiceHtml(
+            voucher = previewVoucher,
+            items = lineItems,
+            business = previewBusiness,
+            party = party,
+            additionalCharges = additionalCharges
+        )
+    }
     Card(
         modifier = Modifier
             .fillMaxSize()
@@ -3700,186 +3788,27 @@ fun LiveInvoicePreview(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp)
-                .verticalScroll(scrollState),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .padding(8.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "LIVE INVOICE PREVIEW",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = AppColors.primary,
-                    modifier = Modifier
-                        .background(AppColors.primary.copy(alpha = 0.12f), RoundedCornerShape(4.dp))
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                )
-                Text(
-                    text = if (profile?.gstin.isNullOrBlank()) "ESTIMATE" else "TAX INVOICE",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = AppColors.textPrimary
-                )
-            }
-
-            // Buyer and Seller details block
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .border(0.5.dp, Color.LightGray, RoundedCornerShape(4.dp))
-                    .padding(10.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                // Seller Details Box (Left)
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("SELLER:", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
-                    Spacer(modifier = Modifier.height(2.dp))
-                    profile?.let { prof ->
-                        Text(text = prof.businessName, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                        Text(text = "${prof.address}", fontSize = 10.sp, color = AppColors.textSecondary)
-                        Text(text = "${prof.city}, ${prof.state}", fontSize = 10.sp, color = AppColors.textSecondary)
-                        Text(text = "GSTIN: ${if (prof.gstin.isBlank()) "NA" else prof.gstin}", fontSize = 10.sp, color = AppColors.textSecondary)
-                    } ?: Text("Configure profile in Settings", fontSize = 11.sp, color = Color.Red)
-                }
-
-                // Bill To Box (Right)
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("BUYER:", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
-                    Spacer(modifier = Modifier.height(2.dp))
-                    party?.let { p ->
-                        Text(text = p.name, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                        Text(text = p.address, fontSize = 10.sp, color = AppColors.textSecondary)
-                        Text(text = "${p.city}, ${p.state}", fontSize = 10.sp, color = AppColors.textSecondary)
-                        Text(text = "GSTIN: ${p.gstin ?: "NA"}", fontSize = 10.sp, color = AppColors.textSecondary)
-                    } ?: Text(text = "Cash / Walk-in Customer", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = AppColors.textSecondary)
-                }
-            }
-
-            // Invoice Metadata
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text("Voucher: $voucherNo", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                Text("Date: ${Utils.formatDate(voucherDate)}", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                Text("Mode: $paymentMode", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-            }
-
-            HorizontalDivider(color = Color.LightGray, modifier = Modifier.padding(vertical = 4.dp))
-
-            // Item Table Block
-            Text("LINE ITEMS", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
-            
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .border(0.5.dp, Color.LightGray, RoundedCornerShape(4.dp))
-            ) {
-                Column {
-                    // Table Header Row
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(Color(0xFFF9F9F9))
-                            .padding(8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("#", fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(20.dp))
-                        Text("Product", fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.5f))
-                        Text("Qty", fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.7f))
-                        Text("Rate", fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.8f))
-                        Text("Total", fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.0f))
+            Text(
+                text = "Live invoice preview",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                color = AppColors.primary,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+            )
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = {
+                    WebView(context).apply {
+                        configureInvoiceWebView(this)
+                        webViewClient = WebViewClient()
                     }
-
-                    // Items List inside the table
-                    if (lineItems.isEmpty()) {
-                        Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                            Text("No items on invoice", fontSize = 12.sp, color = Color.Gray)
-                        }
-                    } else {
-                        lineItems.forEachIndexed { idx, item ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text("${idx + 1}", fontSize = 11.sp, modifier = Modifier.width(20.dp))
-                                Column(modifier = Modifier.weight(1.5f)) {
-                                    Text(item.productName, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                    if (item.hsnCode.isNotBlank()) {
-                                        Text("HSN: ${item.hsnCode} | GST: ${item.gstRate}%", fontSize = 9.sp, color = AppColors.textSecondary)
-                                    }
-                                }
-                                Text("${item.qty} ${item.unit}", fontSize = 11.sp, modifier = Modifier.weight(0.7f))
-                                Text(String.format("%.2f", item.rate), fontSize = 11.sp, modifier = Modifier.weight(0.8f))
-                                Text(Utils.formatIndianCurrency(item.totalAmount), fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.0f))
-                            }
-                        }
-                    }
+                },
+                update = { webView ->
+                    webView.loadDataWithBaseURL("file:///", html, "text/html", "UTF-8", null)
                 }
-            }
-
-            Spacer(modifier = Modifier.height(4.dp))
-
-            // Subtotals Block
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Color(0xFFF9F9F9), RoundedCornerShape(8.dp))
-                    .border(0.5.dp, Color.LightGray, RoundedCornerShape(8.dp))
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Taxable Subtotal", fontSize = 11.sp, color = AppColors.textSecondary)
-                    Text(Utils.formatIndianCurrency(taxableAmount), fontSize = 11.sp, color = AppColors.textPrimary)
-                }
-                if (cgst > 0.0) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("CGST Total", fontSize = 11.sp, color = AppColors.textSecondary)
-                        Text(Utils.formatIndianCurrency(cgst), fontSize = 11.sp, color = AppColors.textPrimary)
-                    }
-                }
-                if (sgst > 0.0) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("SGST Total", fontSize = 11.sp, color = AppColors.textSecondary)
-                        Text(Utils.formatIndianCurrency(sgst), fontSize = 11.sp, color = AppColors.textPrimary)
-                    }
-                }
-                if (igst > 0.0) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("IGST Total", fontSize = 11.sp, color = AppColors.textSecondary)
-                        Text(Utils.formatIndianCurrency(igst), fontSize = 11.sp, color = AppColors.textPrimary)
-                    }
-                }
-                additionalCharges.forEach { charge ->
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(charge.label.ifBlank { "Other" }, fontSize = 11.sp, color = AppColors.textSecondary)
-                        Text(Utils.formatIndianCurrency(charge.amount), fontSize = 11.sp, color = AppColors.textPrimary)
-                    }
-                }
-                if (Math.abs(roundOff) > 0.0) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Round Off", fontSize = 11.sp, color = AppColors.textSecondary)
-                        Text(Utils.formatIndianCurrency(roundOff), fontSize = 11.sp, color = AppColors.textPrimary)
-                    }
-                }
-                HorizontalDivider(color = Color.LightGray, modifier = Modifier.padding(vertical = 4.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("NET PAYABLE", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = AppColors.primary)
-                    Text(Utils.formatIndianCurrency(netAmount), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = AppColors.primary)
-                }
-            }
+            )
         }
     }
 }

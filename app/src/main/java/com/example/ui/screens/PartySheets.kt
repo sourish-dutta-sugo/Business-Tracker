@@ -23,6 +23,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -32,6 +33,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.example.data.filterDecimalInput
 import com.example.data.Party
 import com.example.ui.theme.AppColors
 import com.example.ui.theme.GstinValidationFeedback
@@ -51,6 +53,7 @@ fun CreatePartyInlineSheet(
     onDismiss: () -> Unit
 ) {
     var name by remember { mutableStateOf("") }
+    var type by remember { mutableStateOf(partyType) }
     var phone by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var gstin by remember { mutableStateOf("") }
@@ -62,6 +65,9 @@ fun CreatePartyInlineSheet(
     var stateCode by remember { mutableStateOf("") }
     var openingBalance by remember { mutableStateOf("") }
     var balanceType by remember { mutableStateOf("DR") }
+    var creditLimit by remember { mutableStateOf("0") }
+    var creditDays by remember { mutableStateOf("") }
+    var notes by remember { mutableStateOf("") }
     var nameError by remember { mutableStateOf(false) }
     var gstinValid by remember { mutableStateOf<Boolean?>(null) }
     var pinLoading by remember { mutableStateOf(false) }
@@ -137,6 +143,23 @@ fun CreatePartyInlineSheet(
                 modifier = Modifier.fillMaxWidth(),
                 colors = fieldColors
             )
+            Spacer(Modifier.height(8.dp))
+
+            Text("Party Type", color = AppColors.labelText, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("CUSTOMER", "SUPPLIER", "BOTH").forEach { option ->
+                    FilterChip(
+                        selected = type == option,
+                        onClick = { type = option },
+                        label = { Text(option) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = AppColors.primary,
+                            selectedLabelColor = AppColors.textOnPrimary,
+                            labelColor = AppColors.textPrimary
+                        )
+                    )
+                }
+            }
             Spacer(Modifier.height(8.dp))
 
             Text("Phone (optional)", color = AppColors.labelText, fontSize = 12.sp, fontWeight = FontWeight.Medium)
@@ -275,11 +298,21 @@ fun CreatePartyInlineSheet(
             ) {
                 OutlinedTextField(
                     value = openingBalance,
-                    onValueChange = { openingBalance = it.filter { c -> c.isDigit() || c == '.' } },
+                    onValueChange = { openingBalance = filterDecimalInput(it) },
                     placeholder = { Text("0.00", color = AppColors.inputPlaceholder) },
                     prefix = { Text("₹", color = AppColors.textPrimary) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .onFocusChanged { focusState ->
+                            if (focusState.isFocused) {
+                                if (openingBalance == "0" || openingBalance == "0.0" || openingBalance == "0.00") {
+                                    openingBalance = ""
+                                }
+                            } else if (openingBalance.isBlank()) {
+                                openingBalance = "0"
+                            }
+                        },
                     colors = fieldColors
                 )
                 Row {
@@ -299,6 +332,38 @@ fun CreatePartyInlineSheet(
                 }
             }
 
+            Text("Credit Limit (optional)", color = AppColors.labelText, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            OutlinedTextField(
+                value = creditLimit,
+                onValueChange = { creditLimit = filterDecimalInput(it) },
+                placeholder = { Text("0.00", color = AppColors.inputPlaceholder) },
+                modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                colors = fieldColors
+            )
+            Spacer(Modifier.height(8.dp))
+
+            Text("Credit Days (optional)", color = AppColors.labelText, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            OutlinedTextField(
+                value = creditDays,
+                onValueChange = { creditDays = it.filter(Char::isDigit) },
+                placeholder = { Text("e.g. 30", color = AppColors.inputPlaceholder) },
+                modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                colors = fieldColors
+            )
+            Spacer(Modifier.height(8.dp))
+
+            Text("Notes (optional)", color = AppColors.labelText, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            OutlinedTextField(
+                value = notes,
+                onValueChange = { notes = it },
+                placeholder = { Text("Additional notes", color = AppColors.inputPlaceholder) },
+                minLines = 3,
+                modifier = Modifier.fillMaxWidth(),
+                colors = fieldColors
+            )
+
             Spacer(Modifier.height(24.dp))
 
             Button(
@@ -311,7 +376,7 @@ fun CreatePartyInlineSheet(
                         Party(
                             id = UUID.randomUUID().toString(),
                             name = name.trim(),
-                            type = partyType,
+                            type = type,
                             phone = phone.trim(),
                             email = email.trim(),
                             address = address.trim(),
@@ -322,7 +387,10 @@ fun CreatePartyInlineSheet(
                             gstin = gstin.trim().ifBlank { null },
                             pan = pan.trim().ifBlank { null },
                             openingBalance = openingBalance.toDoubleOrNull() ?: 0.0,
-                            balanceType = balanceType
+                            balanceType = balanceType,
+                            creditLimit = creditLimit.toDoubleOrNull() ?: 0.0,
+                            creditDays = creditDays.toIntOrNull() ?: 0,
+                            notes = notes.trim()
                         )
                     )
                 },

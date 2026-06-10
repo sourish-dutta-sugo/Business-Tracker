@@ -357,6 +357,8 @@ fun AddProductForm(
                     modifier = Modifier.weight(1f).onFocusChanged { focusState ->
                         if (focusState.isFocused && (saleRateStr == "0" || saleRateStr == "0.0" || saleRateStr == "0.00")) {
                             saleRateStr = ""
+                        } else if (!focusState.isFocused && saleRateStr.isBlank()) {
+                            saleRateStr = "0"
                         }
                     },
                     singleLine = true,
@@ -384,6 +386,8 @@ fun AddProductForm(
                     modifier = Modifier.weight(1f).onFocusChanged { focusState ->
                         if (focusState.isFocused && (purchaseRateStr == "0" || purchaseRateStr == "0.0" || purchaseRateStr == "0.00")) {
                             purchaseRateStr = ""
+                        } else if (!focusState.isFocused && purchaseRateStr.isBlank()) {
+                            purchaseRateStr = "0"
                         }
                     },
                     singleLine = true,
@@ -461,6 +465,8 @@ fun AddProductForm(
                 modifier = Modifier.fillMaxWidth().onFocusChanged { focusState ->
                     if (focusState.isFocused && (openingStockStr == "0" || openingStockStr == "0.0" || openingStockStr == "0.00")) {
                         openingStockStr = ""
+                    } else if (!focusState.isFocused && openingStockStr.isBlank()) {
+                        openingStockStr = "0"
                     }
                 },
                 singleLine = true,

@@ -4,6 +4,8 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.os.CancellationSignal
+import android.os.Handler
+import android.os.Looper
 import android.print.PrintAttributes
 import android.print.PrintManager
 import android.webkit.WebView
@@ -12,6 +14,7 @@ import androidx.core.content.FileProvider
 import com.example.data.AdditionalCharge
 import com.example.data.AppDatabase
 import com.example.data.BusinessProfile
+import com.example.data.DEFAULT_TERMS_AND_CONDITIONS
 import com.example.data.Party
 import com.example.data.Voucher
 import com.example.data.VoucherItem
@@ -42,7 +45,9 @@ object InvoiceGenerator {
         val creditDueDate: String = "",
         val remainingCreditAmount: Double = 0.0,
         val isAdvance: Boolean = false,
-        val advanceFor: String = ""
+        val advanceFor: String = "",
+        val referenceNo: String = "",
+        val otherReferences: String = ""
     )
 
     data class InvoiceDocumentData(
@@ -83,6 +88,7 @@ object InvoiceGenerator {
         val currentInvoiceAmount: Double,
         val advanceReceived: Double,
         val partPaymentReceived: Double,
+        val partPaymentSubmode: String,
         val balanceDue: Double,
         val outstandingAmount: Double,
         val dueDateLabel: String,
@@ -104,6 +110,8 @@ object InvoiceGenerator {
         val paymentSnapshot: InvoicePaymentSnapshot,
         val totals: InvoiceTotals,
         val taxSummary: List<InvoiceTaxSummary>,
+        val referenceNo: String,
+        val otherReferences: String,
         val amountInWords: String,
         val taxAmountInWords: String
     )
@@ -233,6 +241,7 @@ object InvoiceGenerator {
             currentInvoiceAmount = voucher.netAmount,
             advanceReceived = 0.0,
             partPaymentReceived = 0.0,
+            partPaymentSubmode = "",
             balanceDue = voucher.outstandingAmount,
             outstandingAmount = voucher.outstandingAmount,
             dueDateLabel = "",
@@ -253,6 +262,8 @@ object InvoiceGenerator {
             paymentSnapshot = paymentSnapshot,
             totals = totals,
             taxSummary = buildTaxSummary(items, voucher),
+            referenceNo = voucher.referenceNo,
+            otherReferences = voucher.dispatchDocNo,
             amountInWords = amountInWords(voucher.netAmount),
             taxAmountInWords = amountInWords(totals.totalTaxAmount)
         )
@@ -314,15 +325,32 @@ object InvoiceGenerator {
     ) {
         withContext(Dispatchers.Main) {
             val webView = createConfiguredWebView(context)
-            try {
-                loadHtmlIntoWebView(webView, bundle.html)
-                val printManager = context.getSystemService(Context.PRINT_SERVICE) as PrintManager
-                val printAdapter = webView.createPrintDocumentAdapter(bundle.document.invoiceNumber)
-                val attributes = buildPrintAttributes()
-                printManager.print(bundle.document.invoiceNumber, printAdapter, attributes)
-            } finally {
-                webView.destroy()
+            suspendCancellableCoroutine<Unit> { continuation ->
+                webView.webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        val target = view ?: return
+                        target.postDelayed({
+                            runCatching {
+                                val printManager = context.getSystemService(Context.PRINT_SERVICE) as PrintManager
+                                val printAdapter = target.createPrintDocumentAdapter(bundle.document.invoiceNumber)
+                                val printAttributes = PrintAttributes.Builder()
+                                    .setMediaSize(PrintAttributes.MediaSize.ISO_A4)
+                                    .setResolution(PrintAttributes.Resolution("pdf", "pdf", 600, 600))
+                                    .setMinMargins(PrintAttributes.Margins(0, 0, 0, 0))
+                                    .build()
+                                printManager.print("Invoice_${bundle.document.invoiceNumber}", printAdapter, printAttributes)
+                            }.onSuccess {
+                                if (continuation.isActive) continuation.resume(Unit)
+                            }.onFailure {
+                                if (continuation.isActive) continuation.resumeWithException(it)
+                            }
+                        }, 500L)
+                    }
+                }
+                webView.loadDataWithBaseURL("file:///", bundle.html, "text/html", "UTF-8", null)
+                continuation.invokeOnCancellation { webView.destroy() }
             }
+            webView.destroy()
         }
     }
 
@@ -374,6 +402,7 @@ object InvoiceGenerator {
             currentInvoiceAmount = source.voucher.netAmount,
             advanceReceived = advanceReceived,
             partPaymentReceived = partPaymentReceived,
+            partPaymentSubmode = source.extras.partialPaymentSubmode,
             balanceDue = source.extras.remainingCreditAmount.coerceAtLeast(source.voucher.outstandingAmount).coerceAtLeast(0.0),
             outstandingAmount = source.voucher.outstandingAmount.coerceAtLeast(0.0),
             dueDateLabel = dueDateLabel,
@@ -403,6 +432,8 @@ object InvoiceGenerator {
             paymentSnapshot = paymentSnapshot,
             totals = totals,
             taxSummary = taxSummary,
+            referenceNo = source.extras.referenceNo.ifBlank { source.voucher.referenceNo },
+            otherReferences = source.extras.otherReferences,
             amountInWords = amountInWords(source.voucher.netAmount),
             taxAmountInWords = amountInWords(totals.totalTaxAmount)
         )
@@ -434,85 +465,73 @@ object InvoiceGenerator {
         val showLogo = business.showLogo && !business.logoPath.isNullOrBlank() && File(business.logoPath!!).exists()
         val showSignature = business.showSignature && !business.signaturePath.isNullOrBlank() && File(business.signaturePath!!).exists()
         val isIntrastate = !voucher.isIgst && buyer?.stateCode == business.stateCode
-
-        val itemRows = document.items.mapIndexed { index, item ->
-            val description = buildString {
-                append(escapeHtml(item.productName))
-                if (item.discount > 0.0) {
-                    append("<div class='subtext'>Discount: ${escapeHtml(item.discountType)} ${formatMoney(item.discount)}</div>")
-                }
+        val heading = when {
+            voucher.documentType.contains("PROFORMA", ignoreCase = true) -> "PROFORMA INVOICE"
+            business.gstin.isNotBlank() -> "TAX INVOICE"
+            else -> "INVOICE"
+        }
+        val modeTermsHtml = buildModeTermsHtml(document)
+        val dueDateValue = document.dueDateLabel
+        val referenceValue = document.referenceNo
+        val otherReferencesValue = document.otherReferences
+        val sellerDetailsHtml = buildString {
+            if (business.address.isNotBlank()) append("<div>${escapeHtml(business.address).replace("\n", "<br/>")}</div>")
+            if (business.phone.isNotBlank()) append("<div>Ph : ${escapeHtml(business.phone)}</div>")
+            if (business.gstin.isNotBlank()) append("<div>GSTIN/UIN: ${escapeHtml(business.gstin)}</div>")
+            if (business.state.isNotBlank()) append("<div>State Name : ${escapeHtml(business.state)}, Code : ${escapeHtml(business.stateCode)}</div>")
+            if (business.email.isNotBlank()) append("<div>E-Mail : ${escapeHtml(business.email)}</div>")
+            if (business.pan.isNotBlank()) append("<div>PAN: ${escapeHtml(business.pan)}</div>")
+            if (business.accountNo.isNotBlank()) append("<div>A/c: ${escapeHtml(business.accountNo)}</div>")
+        }
+        val buyerDetailsHtml = buildString {
+            append("<div class='sublabel'>Buyer (Bill to)</div>")
+            append("<div style='font-weight:bold;font-size:12px;'>${escapeHtml(buyer?.name ?: "Cash / Walk-in Customer")}</div>")
+            if (!buyer?.address.isNullOrBlank()) append("<div>${escapeHtml(buyer!!.address).replace("\n", "<br/>")}</div>")
+            if (!buyer?.city.isNullOrBlank() || !buyer?.pin.isNullOrBlank()) {
+                append("<div>${escapeHtml(buyer?.city.orEmpty())}${if (!buyer?.pin.isNullOrBlank()) " - ${escapeHtml(buyer!!.pin)}" else ""}</div>")
             }
+            if (!buyer?.pan.isNullOrBlank()) append("<div>PAN: ${escapeHtml(buyer!!.pan!!)}</div>")
+            if (!buyer?.gstin.isNullOrBlank()) append("<div>GSTIN: ${escapeHtml(buyer!!.gstin!!)}</div>")
+            if (!buyer?.state.isNullOrBlank()) append("<div>State Name : ${escapeHtml(buyer!!.state)}, Code : ${escapeHtml(buyer.stateCode)}</div>")
+            if (!buyer?.state.isNullOrBlank()) append("<div>Place of Supply   : ${escapeHtml(buyer!!.state)}</div>")
+        }
+        val transportRowsHtml = buildTransportRowsHtml(voucher)
+        val itemRows = document.items.mapIndexed { index, item ->
+            val bg = if (index % 2 == 0) "#ffffff" else "#fafafa"
             """
-            <tr>
-              <td class='center'>${index + 1}</td>
-              <td>$description</td>
-              <td class='center'>${escapeHtml(item.hsnCode)}</td>
-              <td class='right'>${formatQty(item.qty)}</td>
-              <td class='center'>${escapeHtml(item.unit)}</td>
-              <td class='right'>${formatMoney(item.rate)}</td>
-              <td class='right'>${formatMoney(item.taxableAmount)}</td>
+            <tr style='background:$bg;'>
+              <td class='c'>${index + 1}</td>
+              <td><span class='b'>${escapeHtml(item.productName)}</span></td>
+              <td class='c'>${escapeHtml(item.hsnCode)}</td>
+              <td class='c'>${formatQty(item.qty)}</td>
+              <td class='r'>${formatMoney(item.rate)}</td>
+              <td class='c'>${escapeHtml(item.unit)}</td>
+              <td class='r'>${formatMoney(item.taxableAmount)}</td>
             </tr>
             """.trimIndent()
         }.joinToString("\n")
-
-        val adjustmentRows = buildList {
-            if (voucher.cgst > 0.0) add("CGST" to voucher.cgst)
-            if (voucher.sgst > 0.0) add("SGST" to voucher.sgst)
-            if (voucher.igst > 0.0) add("IGST" to voucher.igst)
-            document.additionalCharges.forEach { add(it.label.ifBlank { "Additional Charge" } to it.amount) }
-            if (abs(voucher.roundOff) > 0.0) add("Round Off" to voucher.roundOff)
-        }.joinToString("\n") { (label, amount) ->
+        val additionalChargeRows = document.additionalCharges.joinToString("\n") { charge ->
             """
             <tr>
-              <td colspan='6' class='label-cell'>${escapeHtml(label)}</td>
-              <td class='right'>${formatSignedMoney(amount)}</td>
+              <td></td>
+              <td colspan='5' class='r' style='font-style:italic;font-weight:bold;'>${escapeHtml(charge.label.ifBlank { "Additional Charge" })}</td>
+              <td class='r'>${formatMoney(charge.amount)}</td>
             </tr>
             """.trimIndent()
         }
-
-        val taxRows = document.taxSummary.joinToString("\n") { summary ->
-            """
-            <tr>
-              <td>${escapeHtml(summary.hsnCode)}</td>
-              <td class='right'>${formatMoney(summary.taxableValue)}</td>
-              <td class='center'>${rateLabel(summary.cgstRate)}</td>
-              <td class='right'>${formatMoney(summary.cgstAmount)}</td>
-              <td class='center'>${rateLabel(summary.sgstRate)}</td>
-              <td class='right'>${formatMoney(summary.sgstAmount)}</td>
-              <td class='center'>${rateLabel(summary.igstRate)}</td>
-              <td class='right'>${formatMoney(summary.igstAmount)}</td>
-              <td class='right'>${formatMoney(summary.totalTaxAmount)}</td>
-            </tr>
-            """.trimIndent()
+        val gstRows = buildItemGstRows(document, isIntrastate)
+        val totalUnit = document.items.firstOrNull()?.unit.orEmpty()
+        val spacerRows = (1..8).joinToString("") {
+            "<tr class='spacer'><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>"
         }
-
-        val transportRows = buildList {
-            if (voucher.transporterName.isNotBlank()) add("Transport" to voucher.transporterName)
-            if (voucher.vehicleNo.isNotBlank()) add("Vehicle No." to voucher.vehicleNo)
-            if (voucher.lrNo.isNotBlank()) add("LR / GR No." to voucher.lrNo)
-            if (voucher.destination.isNotBlank()) add("Destination" to voucher.destination)
-            if (voucher.referenceNo.isNotBlank()) add("Reference No." to voucher.referenceNo)
-            if (voucher.dispatchDocNo.isNotBlank()) add("Dispatch Doc" to voucher.dispatchDocNo)
-        }.joinToString("<br/>") { "${escapeHtml(it.first)}: <strong>${escapeHtml(it.second)}</strong>" }
-
-        val bankDetails = buildList {
-            if (business.bankName.isNotBlank()) add("Bank: ${escapeHtml(business.bankName)}")
-            if (business.accountNo.isNotBlank()) add("A/C No: ${escapeHtml(business.accountNo)}")
-            if (business.ifsc.isNotBlank()) add("IFSC: ${escapeHtml(business.ifsc)}")
-            if (business.branchName.isNotBlank()) add("Branch: ${escapeHtml(business.branchName)}")
-        }.joinToString("<br/>")
-
-        val qrSection = if (business.showUpiQr && business.upiId.isNotBlank()) {
-            val upiLink = generateUpiLink(business.upiId, business.businessName, totals.netAmount, document.invoiceNumber)
-            """
-            <div class='payment-box'>
-              <div class='section-title'>QR / UPI</div>
-              ${getQrHtml(upiLink, business.upiId)}
-            </div>
-            """.trimIndent()
+        val paymentSummaryHtml = buildPaymentSummaryHtml(document)
+        val gstBreakupHtml = buildGstBreakupHtml(document, business.gstin.isNotBlank(), isIntrastate)
+        val signatureHtml = if (showSignature) {
+            "<img src='${toFileUrl(business.signaturePath!!)}' style='max-height:55px;max-width:160px;object-fit:contain;display:block;margin-left:auto;'/>"
         } else {
-            ""
+            "<div style='height:55px;'></div>"
         }
+        val termsHtml = escapeHtml(business.termsAndConditions.ifBlank { DEFAULT_TERMS_AND_CONDITIONS }).replace("\n", "<br/>")
 
         return """
         <!DOCTYPE html>
@@ -521,373 +540,347 @@ object InvoiceGenerator {
           <meta charset='UTF-8'/>
           <meta name='viewport' content='width=device-width, initial-scale=1.0'/>
           <style>
-            @page { size: A4; margin: 10mm; }
-            * { box-sizing: border-box; }
-            body {
-              margin: 0;
-              background: #f3f4f7;
-              color: #111827;
-              font-family: Arial, Helvetica, sans-serif;
-              -webkit-print-color-adjust: exact;
-              print-color-adjust: exact;
-            }
-            .sheet {
-              width: 210mm;
-              min-height: 297mm;
-              margin: 0 auto;
-              padding: 9mm;
-              background: #ffffff;
-            }
-            .title {
-              text-align: center;
-              font-size: 17px;
-              font-weight: 700;
-              letter-spacing: 0.05em;
-              margin-bottom: 8px;
-            }
-            .frame {
-              border: 1px solid #111827;
-            }
-            .top-grid {
-              display: grid;
-              grid-template-columns: 58% 42%;
-              border-bottom: 1px solid #111827;
-            }
-            .seller, .meta-box {
-              padding: 8px 10px;
-              min-height: 165px;
-            }
-            .seller {
-              border-right: 1px solid #111827;
-            }
-            .brand {
-              display: flex;
-              gap: 12px;
-              align-items: flex-start;
-            }
-            .logo {
-              width: 92px;
-              max-height: 74px;
-              object-fit: contain;
-            }
-            .business-name {
-              font-size: 23px;
-              font-weight: 700;
-              text-transform: uppercase;
-              line-height: 1.05;
-              margin-bottom: 4px;
-            }
-            .meta-grid {
-              display: grid;
-              grid-template-columns: 1fr 1fr;
-              border-left: 1px solid #111827;
-              height: 100%;
-            }
-            .meta-cell {
-              border-bottom: 1px solid #111827;
-              border-right: 1px solid #111827;
-              padding: 7px 8px;
-              min-height: 56px;
-            }
-            .meta-cell:nth-child(2n) {
-              border-right: none;
-            }
-            .meta-label, .section-title, .subtext {
-              color: #4b5563;
-              font-size: 10px;
-            }
-            .meta-value {
-              font-size: 14px;
-              font-weight: 700;
-              margin-top: 3px;
-            }
-            .party-grid {
-              display: grid;
-              grid-template-columns: 58% 42%;
-              border-bottom: 1px solid #111827;
-            }
-            .party-box, .transport-box {
-              padding: 8px 10px;
-              min-height: 106px;
-            }
-            .party-box {
-              border-right: 1px solid #111827;
-            }
-            .body-table, .tax-table {
-              width: 100%;
-              border-collapse: collapse;
-              table-layout: fixed;
-            }
-            .body-table th, .body-table td, .tax-table th, .tax-table td {
-              border: 1px solid #111827;
-              padding: 6px 7px;
-              vertical-align: top;
-              font-size: 11px;
-            }
-            .body-table thead th, .tax-table thead th {
-              background: #f1f5f9;
-              font-size: 10px;
-              font-weight: 700;
-            }
-            .body-table { border-left: none; border-right: none; }
-            .body-table th:first-child, .body-table td:first-child { border-left: none; width: 5%; }
-            .body-table th:nth-child(2), .body-table td:nth-child(2) { width: 41%; }
-            .body-table th:nth-child(3), .body-table td:nth-child(3) { width: 12%; }
-            .body-table th:nth-child(4), .body-table td:nth-child(4) { width: 10%; }
-            .body-table th:nth-child(5), .body-table td:nth-child(5) { width: 10%; }
-            .body-table th:nth-child(6), .body-table td:nth-child(6) { width: 10%; }
-            .body-table th:nth-child(7), .body-table td:nth-child(7) { width: 12%; border-right: none; }
-            .center { text-align: center; }
-            .right { text-align: right; }
-            .totals-wrap {
-              display: grid;
-              grid-template-columns: 58% 42%;
-              border-bottom: 1px solid #111827;
-            }
-            .totals-left {
-              border-right: 1px solid #111827;
-              padding: 8px 10px;
-            }
-            .totals-right {
-              padding: 0;
-            }
-            .totals-table {
-              width: 100%;
-              border-collapse: collapse;
-            }
-            .totals-table td {
-              border-bottom: 1px solid #111827;
-              padding: 7px 10px;
-              font-size: 11px;
-            }
-            .totals-table tr:last-child td {
-              border-bottom: none;
-            }
-            .label-cell {
-              text-align: right;
-              color: #111827;
-              font-weight: 600;
-            }
-            .grand-total td {
-              background: #eef2ff;
-              font-size: 14px;
-              font-weight: 700;
-            }
-            .summary-grid {
-              display: grid;
-              grid-template-columns: 58% 42%;
-              border-bottom: 1px solid #111827;
-            }
-            .words-box, .payment-box {
-              padding: 8px 10px;
-            }
-            .words-box {
-              border-right: 1px solid #111827;
-            }
-            .footer-grid {
-              display: grid;
-              grid-template-columns: 58% 42%;
-            }
-            .declaration-box, .signature-box {
-              padding: 10px;
-              min-height: 118px;
-            }
-            .declaration-box {
-              border-right: 1px solid #111827;
-            }
-            .signature-box {
-              display: flex;
-              flex-direction: column;
-              justify-content: space-between;
-              align-items: flex-end;
-            }
-            .signature {
-              max-width: 160px;
-              max-height: 70px;
-              object-fit: contain;
-            }
-            .muted { color: #6b7280; }
-            .divider-line { margin: 5px 0; border-top: 1px solid #d1d5db; }
-            .terms { white-space: pre-line; line-height: 1.45; font-size: 11px; }
+            * { margin:0; padding:0; box-sizing:border-box; }
+            body { font-family:Arial,Helvetica,sans-serif; font-size:11px; color:#000000; background:#ffffff; }
+            .page { width:100%; padding:18px 22px; background:#ffffff; }
+            table { width:100%; border-collapse:collapse; table-layout:fixed; }
+            td, th { border:1px solid #000000; padding:3px 5px; vertical-align:top; }
+            .nb td, .nb th { border:none; }
+            .b { font-weight:bold; }
+            .c { text-align:center; }
+            .r { text-align:right; }
+            .heading { font-size:14px; font-weight:bold; text-align:center; letter-spacing:2px; padding:5px 0 8px 0; }
+            .sublabel { font-size:9px; color:#555555; }
+            .aw { font-weight:bold; font-size:11px; padding:5px 6px; }
+            .thdr { background:#f0f0f0; font-weight:bold; font-size:10px; }
+            .gthdr { background:#e8e8e8; font-weight:bold; font-size:10px; text-align:center; }
+            .tot { font-weight:bold; background:#f5f5f5; }
+            .spacer td { border-top:none; border-bottom:none; height:20px; }
+            .psummary td { font-size:10px; }
+            .wrap { word-wrap:break-word; overflow-wrap:break-word; white-space:normal; max-width:0; }
+            .terms { word-wrap:break-word; overflow-wrap:break-word; white-space:normal; line-height:1.45; }
             @media print {
-              body { background: #ffffff; }
-              .sheet {
-                width: 100%;
-                min-height: auto;
-                margin: 0;
-                padding: 0;
-              }
+              body { -webkit-print-color-adjust:exact; }
             }
           </style>
         </head>
         <body>
-          <div class='sheet'>
-            <div class='title'>${escapeHtml(document.displayTitle)}</div>
-            <div class='frame'>
-              <div class='top-grid'>
-                <div class='seller'>
-                  <div class='brand'>
-                    ${if (showLogo) "<img class='logo' src='${toFileUrl(business.logoPath!!)}' alt='Logo' />" else ""}
-                    <div>
-                      <div class='business-name'>${escapeHtml(business.businessName)}</div>
-                      <div>${escapeHtml(business.address).replace("\n", "<br/>")}</div>
-                      ${if (business.city.isNotBlank()) "<div>${escapeHtml(business.city)} - ${escapeHtml(business.pin)}</div>" else ""}
-                      ${if (business.pan.isNotBlank()) "<div>PAN: ${escapeHtml(business.pan)}</div>" else ""}
-                      ${if (business.phone.isNotBlank()) "<div>Ph: ${escapeHtml(business.phone)}</div>" else ""}
-                      ${if (business.gstin.isNotBlank()) "<div>GSTIN/UIN: ${escapeHtml(business.gstin)}</div>" else ""}
-                      ${if (business.state.isNotBlank()) "<div>State Name: ${escapeHtml(business.state)}, Code: ${escapeHtml(business.stateCode)}</div>" else ""}
-                      ${if (business.email.isNotBlank()) "<div>E-Mail: ${escapeHtml(business.email)}</div>" else ""}
-                    </div>
-                  </div>
-                </div>
-                <div class='meta-grid'>
-                  <div class='meta-cell'>
-                    <div class='meta-label'>Invoice No.</div>
-                    <div class='meta-value'>${escapeHtml(document.invoiceNumber)}</div>
-                  </div>
-                  <div class='meta-cell'>
-                    <div class='meta-label'>Dated</div>
-                    <div class='meta-value'>${escapeHtml(document.issuedAtLabel)}</div>
-                  </div>
-                  <div class='meta-cell'>
-                    <div class='meta-label'>Mode / Terms of Payment</div>
-                    <div class='meta-value'>${escapeHtml(document.paymentSnapshot.modeLabel)}</div>
-                  </div>
-                  <div class='meta-cell'>
-                    <div class='meta-label'>Due Date</div>
-                    <div class='meta-value'>${escapeHtml(document.dueDateLabel.ifBlank { "-" })}</div>
-                  </div>
-                  <div class='meta-cell'>
-                    <div class='meta-label'>Reference No. & Date</div>
-                    <div class='meta-value'>${escapeHtml(voucher.referenceNo.ifBlank { "-" })}</div>
-                  </div>
-                  <div class='meta-cell'>
-                    <div class='meta-label'>Other References</div>
-                    <div class='meta-value'>${escapeHtml(voucher.dispatchDocNo.ifBlank { "-" })}</div>
-                  </div>
-                </div>
-              </div>
-
-              <div class='party-grid'>
-                <div class='party-box'>
-                  <div class='section-title'>Buyer (Bill to)</div>
-                  <div style='font-size:15px;font-weight:700;margin-top:2px;'>${escapeHtml(buyer?.name ?: "Walk-in Customer")}</div>
-                  ${if (!buyer?.address.isNullOrBlank()) "<div>${escapeHtml(buyer!!.address).replace("\n", "<br/>")}</div>" else ""}
-                  ${if (!buyer?.city.isNullOrBlank()) "<div>${escapeHtml(buyer!!.city)} - ${escapeHtml(buyer.pin)}</div>" else ""}
-                  ${if (!buyer?.phone.isNullOrBlank()) "<div>Phone: ${escapeHtml(buyer!!.phone)}</div>" else ""}
-                  ${if (!buyer?.email.isNullOrBlank()) "<div>Email: ${escapeHtml(buyer!!.email)}</div>" else ""}
-                  ${if (!buyer?.gstin.isNullOrBlank()) "<div>GSTIN: ${escapeHtml(buyer!!.gstin!!)}</div>" else ""}
-                  ${if (!buyer?.pan.isNullOrBlank()) "<div>PAN: ${escapeHtml(buyer!!.pan!!)}</div>" else ""}
-                  ${if (!buyer?.state.isNullOrBlank()) "<div>Place of Supply: ${escapeHtml(buyer!!.state)}</div>" else ""}
-                  ${if (!buyer?.stateCode.isNullOrBlank()) "<div>State Code: ${escapeHtml(buyer!!.stateCode)}</div>" else ""}
-                </div>
-                <div class='transport-box'>
-                  <div class='section-title'>Transport / Delivery / Payment</div>
-                  <div style='margin-top:2px;'>${transportRows.ifBlank { "<span class='muted'>No transport details</span>" }}</div>
-                  <div class='divider-line'></div>
-                  <div>${document.paymentSnapshot.summaryLabel}</div>
-                  ${if (bankDetails.isNotBlank()) "<div class='divider-line'></div><div>$bankDetails</div>" else ""}
-                </div>
-              </div>
-
-              <table class='body-table'>
-                <thead>
-                  <tr>
-                    <th>Sl No.</th>
-                    <th>Description of Goods</th>
-                    <th>HSN/SAC</th>
-                    <th>Quantity</th>
-                    <th>Unit</th>
-                    <th>Rate</th>
-                    <th>Taxable Amount</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  $itemRows
-                  $adjustmentRows
-                </tbody>
-              </table>
-
-              <div class='totals-wrap'>
-                <div class='totals-left'>
-                  <div class='section-title'>Amount Chargeable (in words)</div>
-                  <div style='font-size:15px;font-weight:700;margin-top:4px;'>${escapeHtml(document.amountInWords)}</div>
-                </div>
-                <div class='totals-right'>
-                  <table class='totals-table'>
-                    <tr><td>Items Quantity</td><td class='right'>${formatQty(totals.totalQuantity)}</td></tr>
-                    <tr><td>Taxable Amount</td><td class='right'>${formatMoney(totals.taxableAmount)}</td></tr>
-                    ${if (voucher.cgst > 0.0) "<tr><td>CGST</td><td class='right'>${formatMoney(voucher.cgst)}</td></tr>" else ""}
-                    ${if (voucher.sgst > 0.0) "<tr><td>SGST / UTGST</td><td class='right'>${formatMoney(voucher.sgst)}</td></tr>" else ""}
-                    ${if (voucher.igst > 0.0) "<tr><td>IGST</td><td class='right'>${formatMoney(voucher.igst)}</td></tr>" else ""}
-                    ${document.additionalCharges.joinToString("") { "<tr><td>${escapeHtml(it.label)}</td><td class='right'>${formatMoney(it.amount)}</td></tr>" }}
-                    ${if (abs(voucher.roundOff) > 0.0) "<tr><td>Round Off</td><td class='right'>${formatSignedMoney(voucher.roundOff)}</td></tr>" else ""}
-                    <tr class='grand-total'><td>Grand Total</td><td class='right'>${formatMoney(totals.netAmount)}</td></tr>
+          <div class='page'>
+            <div class='heading'>$heading</div>
+            <table>
+              <tr>
+                <td style='width:60%;border-right:2px solid #000000;'>
+                  <table class='nb'>
+                    <tr>
+                      <td style='width:95px;'>
+                        ${if (showLogo) "<img src='${toFileUrl(business.logoPath!!)}' style='max-height:65px;max-width:120px;object-fit:contain;display:block;'/>" else ""}
+                      </td>
+                      <td>
+                        <div style='font-weight:bold;font-size:14px;'>${escapeHtml(business.businessName)}</div>
+                      </td>
+                    </tr>
                   </table>
-                </div>
-              </div>
+                  <div style='line-height:1.8;'>$sellerDetailsHtml</div>
+                  <div style='border-top:1px solid #000000;margin:8px 0;'></div>
+                  <div style='line-height:1.7;'>$buyerDetailsHtml</div>
+                </td>
+                <td style='width:40%;padding:0;'>
+                  <table class='nb' style='height:100%;'>
+                    <tr>
+                      <td style='border-bottom:1px solid #cccccc;'>
+                        <div class='sublabel'>Invoice No.</div>
+                        <div class='b'>${escapeHtml(document.invoiceNumber)}</div>
+                      </td>
+                      <td style='border-left:1px solid #cccccc;border-bottom:1px solid #cccccc;padding-left:6px;'>
+                        <div class='sublabel'>Dated</div>
+                        <div class='b'>${escapeHtml(document.issuedAtLabel)}</div>
+                      </td>
+                    </tr>
+                    <tr><td colspan='2' style='border-bottom:1px solid #cccccc;'>$modeTermsHtml</td></tr>
+                    <tr>
+                      <td colspan='2' class='wrap' style='border-bottom:1px solid #cccccc;'>
+                        <div class='sublabel'>Due Date</div>
+                        <div class='b'>${escapeHtml(dueDateValue)}</div>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td colspan='2' class='wrap' style='border-bottom:1px solid #cccccc;'>
+                        <div class='sublabel'>Reference No. & Date</div>
+                        <div>${escapeHtml(referenceValue)}</div>
+                        ${if (otherReferencesValue.isNotBlank()) "<div class='sublabel' style='margin-top:4px;'>${escapeHtml(otherReferencesValue)}</div>" else ""}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td colspan='2' class='wrap' style='border-bottom:1px solid #cccccc;'>
+                        <div class='sublabel'>Other References</div>
+                        <div>${escapeHtml(otherReferencesValue)}</div>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td colspan='2' style='border-bottom:1px solid #cccccc;'>
+                        <div class='sublabel'>Buyer's Order No.</div>
+                        <div>${escapeHtml(voucher.buyerOrderNo)}</div>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td colspan='2' style='border-bottom:${if (transportRowsHtml.isBlank()) "none" else "1px solid #cccccc"};'>
+                        <div class='sublabel'>Terms of Delivery</div>
+                        <div>${escapeHtml(voucher.termsOfDelivery)}</div>
+                      </td>
+                    </tr>
+                    $transportRowsHtml
+                  </table>
+                </td>
+              </tr>
+            </table>
 
-              <table class='tax-table'>
-                <thead>
-                  <tr>
-                    <th>HSN/SAC</th>
-                    <th>Taxable Value</th>
-                    <th>CGST Rate</th>
-                    <th>CGST Amount</th>
-                    <th>SGST Rate</th>
-                    <th>SGST Amount</th>
-                    <th>IGST Rate</th>
-                    <th>IGST Amount</th>
-                    <th>Total Tax Amount</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  $taxRows
-                  <tr>
-                    <td class='right'><strong>Total</strong></td>
-                    <td class='right'><strong>${formatMoney(totals.taxableAmount)}</strong></td>
-                    <td class='center'>${if (isIntrastate && totals.cgst > 0.0) rateLabel(document.taxSummary.firstOrNull()?.cgstRate ?: 0.0) else ""}</td>
-                    <td class='right'><strong>${formatMoney(totals.cgst)}</strong></td>
-                    <td class='center'>${if (isIntrastate && totals.sgst > 0.0) rateLabel(document.taxSummary.firstOrNull()?.sgstRate ?: 0.0) else ""}</td>
-                    <td class='right'><strong>${formatMoney(totals.sgst)}</strong></td>
-                    <td class='center'>${if (!isIntrastate && totals.igst > 0.0) rateLabel(document.taxSummary.firstOrNull()?.igstRate ?: 0.0) else ""}</td>
-                    <td class='right'><strong>${formatMoney(totals.igst)}</strong></td>
-                    <td class='right'><strong>${formatMoney(totals.totalTaxAmount)}</strong></td>
-                  </tr>
-                </tbody>
-              </table>
+            <table>
+              <tr class='thdr'>
+                <th style='width:4%;' class='c'>Sl No</th>
+                <th style='width:35%;' class='c'>Description</th>
+                <th style='width:10%;' class='c'>HSN/SAC</th>
+                <th style='width:13%;' class='c'>Quantity</th>
+                <th style='width:9%;' class='r'>Rate</th>
+                <th style='width:6%;' class='c'>per</th>
+                <th style='width:13%;' class='r'>Amount</th>
+              </tr>
+              $itemRows
+              $additionalChargeRows
+              $gstRows
+              $spacerRows
+              <tr class='tot'>
+                <td></td>
+                <td class='b'>Total</td>
+                <td></td>
+                <td class='c b'>${formatQty(totals.totalQuantity)} ${escapeHtml(totalUnit)}</td>
+                <td></td>
+                <td></td>
+                <td class='r b'>${formatMoney(totals.netAmount)}</td>
+              </tr>
+            </table>
 
-              <div class='summary-grid'>
-                <div class='words-box'>
-                  <div class='section-title'>Tax Amount (in words)</div>
-                  <div style='font-weight:700;margin-top:4px;'>${escapeHtml(document.taxAmountInWords)}</div>
-                </div>
-                <div class='payment-box'>
-                  <div class='section-title'>Balance Snapshot</div>
-                  <div>Previous Due: ${formatMoney(document.paymentSnapshot.previousDue)}</div>
-                  <div>Current Invoice: ${formatMoney(document.paymentSnapshot.currentInvoiceAmount)}</div>
-                  <div>Advance Received: ${formatMoney(document.paymentSnapshot.advanceReceived)}</div>
-                  <div>Part Payment: ${formatMoney(document.paymentSnapshot.partPaymentReceived)}</div>
-                  <div><strong>Outstanding: ${formatMoney(document.paymentSnapshot.outstandingAmount)}</strong></div>
-                  ${qrSection}
-                </div>
-              </div>
+            <table>
+              <tr>
+                <td style='width:72%;'>
+                  <div class='sublabel'>Amount Chargeable (in words)</div>
+                  <div class='aw'>${escapeHtml(document.amountInWords)}</div>
+                </td>
+                <td style='width:28%;'><div style='text-align:right;font-style:italic;'>E. &amp; O.E</div></td>
+              </tr>
+            </table>
 
-              <div class='footer-grid'>
-                <div class='declaration-box'>
-                  <div class='section-title'>Declaration / Terms & Conditions</div>
-                  <div class='terms'>${escapeHtml(business.termsAndConditions.ifBlank { business.invoiceFooterText }).replace("\n", "<br/>")}</div>
-                </div>
-                <div class='signature-box'>
-                  <div style='text-align:right; width:100%; font-weight:700;'>for ${escapeHtml(business.businessName)}</div>
-                  ${if (showSignature) "<img class='signature' src='${toFileUrl(business.signaturePath!!)}' alt='Signature' />" else "<div style='height:72px;'></div>"}
-                  <div>Authorised Signatory</div>
-                </div>
-              </div>
-            </div>
+            $paymentSummaryHtml
+            $gstBreakupHtml
+
+            <table>
+              <tr>
+                <td style='width:55%;' class='terms'>
+                  ${if (business.bankName.isNotBlank()) """
+                  <div class='b'>Company's Bank Details</div>
+                  <div>Bank Name : <span class='b'>${escapeHtml(business.bankName)}</span></div>
+                  <div>A/c No.   : <span class='b'>${escapeHtml(business.accountNo)}</span></div>
+                  <div>IFS Code  : <span class='b'>${escapeHtml(business.ifsc)}</span></div>
+                  <div>Branch    : <span class='b'>${escapeHtml(business.branchName)}</span></div>
+                  """.trimIndent() else ""}
+                  <div style='height:10px;'></div>
+                  <div class='b'>Declaration</div>
+                  <div class='b'>TERMS &amp; CONDITIONS</div>
+                  <div>$termsHtml</div>
+                </td>
+                <td style='width:5px;border:none;'></td>
+                <td style='width:40%;text-align:right;vertical-align:bottom;'>
+                  <div class='b'>for ${escapeHtml(business.businessName)}</div>
+                  $signatureHtml
+                  <div style='border-top:1px solid #000000;'></div>
+                  <div style='font-size:9px;'>Authorised Signatory</div>
+                </td>
+              </tr>
+            </table>
+
+            <div style='text-align:center;color:#666666;font-size:10px;padding-top:8px;'>${escapeHtml(business.city)}</div>
           </div>
         </body>
         </html>
+        """.trimIndent()
+    }
+
+    private fun buildModeTermsHtml(document: InvoiceDocument): String {
+        val voucher = document.voucher
+        val snapshot = document.paymentSnapshot
+        val dueDateLabel = snapshot.dueDateLabel.ifBlank { "Not specified" }
+        val lines = mutableListOf<String>()
+        when {
+            voucher.paymentMode.equals("CASH", ignoreCase = true) -> lines += "<div class='b'>Cash</div>"
+            voucher.paymentMode.equals("BANK", ignoreCase = true) -> lines += "<div class='b'>Bank Transfer</div>"
+            voucher.paymentMode.equals("UPI", ignoreCase = true) -> lines += "<div class='b'>UPI</div>"
+            voucher.paymentMode.equals("CHEQUE", ignoreCase = true) -> {
+                lines += "<div class='b'>Cheque</div>"
+                val chequeBits = listOfNotNull(
+                    voucher.chequeNo?.takeIf { it.isNotBlank() }?.let { "No: ${escapeHtml(it)}" },
+                    voucher.chequeDate?.takeIf { it > 0L }?.let { "Date: ${escapeHtml(invoiceDateFormat.format(Date(it)))}" }
+                )
+                if (chequeBits.isNotEmpty()) lines += "<div>${chequeBits.joinToString(" | ")}</div>"
+            }
+            voucher.paymentMode.equals("PART_PAYMENT", ignoreCase = true) || voucher.paymentMode.equals("PART PAYMENT", ignoreCase = true) -> {
+                lines += "<div class='b'>Part Payment</div>"
+                lines += "<div>Paid Now: Rs. ${formatMoney(snapshot.partPaymentReceived)}${snapshot.partPaymentSubmode.takeIf { it.isNotBlank() }?.let { " via ${escapeHtml(it)}" } ?: ""}</div>"
+                lines += "<div>Balance Due: Rs. ${formatMoney(snapshot.balanceDue)}</div>"
+                lines += "<div>Due by: ${escapeHtml(dueDateLabel)}</div>"
+            }
+            voucher.paymentMode.equals("CREDIT", ignoreCase = true) -> {
+                lines += "<div class='b'>Credit</div>"
+                lines += "<div>Paid Now: Rs. ${formatMoney(snapshot.partPaymentReceived)}${snapshot.partPaymentSubmode.takeIf { it.isNotBlank() }?.let { " via ${escapeHtml(it)}" } ?: ""}</div>"
+                lines += "<div>Balance Due: Rs. ${formatMoney(snapshot.balanceDue)}</div>"
+                lines += "<div>Due by: ${escapeHtml(dueDateLabel)}</div>"
+            }
+            snapshot.advanceReceived > 0.0 -> {
+                lines += "<div class='b'>Advance Receipt</div>"
+                lines += "<div>Amount: Rs. ${formatMoney(snapshot.advanceReceived)}</div>"
+            }
+            else -> lines += "<div class='b'>${escapeHtml(snapshot.modeLabel)}</div>"
+        }
+        return "<div class='sublabel'>Mode/Terms of Payment</div>${lines.joinToString("")}"
+    }
+
+    private fun buildTransportRowsHtml(voucher: Voucher): String {
+        val rows = buildList {
+            if (voucher.transporterName.isNotBlank()) add("Transporter" to voucher.transporterName)
+            if (voucher.vehicleNo.isNotBlank()) add("Vehicle No." to voucher.vehicleNo)
+            if (voucher.lrNo.isNotBlank()) add("LR/GR No." to voucher.lrNo)
+            if (voucher.destination.isNotBlank()) add("Destination" to voucher.destination)
+        }
+        return rows.joinToString("") { (label, value) ->
+            """
+            <tr>
+              <td colspan='2' style='border-top:1px solid #cccccc;'>
+                <div class='sublabel'>$label</div>
+                <div>${escapeHtml(value)}</div>
+              </td>
+            </tr>
+            """.trimIndent()
+        }
+    }
+
+    private fun buildItemGstRows(document: InvoiceDocument, isIntrastate: Boolean): String {
+        val rows = mutableListOf<String>()
+        if (document.voucher.cgst > 0.0 && isIntrastate) {
+            rows += """
+            <tr>
+              <td></td>
+              <td colspan='5' class='r' style='font-style:italic;font-weight:bold;'>OUTPUT CGST</td>
+              <td class='r'>${formatMoney(document.voucher.cgst)}</td>
+            </tr>
+            """.trimIndent()
+        }
+        if (document.voucher.sgst > 0.0 && isIntrastate) {
+            rows += """
+            <tr>
+              <td></td>
+              <td colspan='5' class='r' style='font-style:italic;font-weight:bold;'>OUTPUT SGST</td>
+              <td class='r'>${formatMoney(document.voucher.sgst)}</td>
+            </tr>
+            """.trimIndent()
+        }
+        if (document.voucher.igst > 0.0 && !isIntrastate) {
+            rows += """
+            <tr>
+              <td></td>
+              <td colspan='5' class='r' style='font-style:italic;font-weight:bold;'>OUTPUT IGST</td>
+              <td class='r'>${formatMoney(document.voucher.igst)}</td>
+            </tr>
+            """.trimIndent()
+        }
+        if (abs(document.voucher.roundOff) > 0.0) {
+            rows += """
+            <tr>
+              <td></td>
+              <td colspan='5' class='r' style='font-style:italic;font-weight:bold;'>ROUND OFF (S)</td>
+              <td class='r'>${formatSignedMoney(document.voucher.roundOff)}</td>
+            </tr>
+            """.trimIndent()
+        }
+        return rows.joinToString("\n")
+    }
+
+    private fun buildPaymentSummaryHtml(document: InvoiceDocument): String {
+        val snapshot = document.paymentSnapshot
+        val mode = document.voucher.paymentMode.uppercase(Locale.ENGLISH)
+        if (mode != "PART_PAYMENT" && mode != "PART PAYMENT" && mode != "CREDIT") return ""
+        val header = if (mode == "CREDIT") "Credit Sale Summary" else "Payment Summary"
+        val paidLabel = snapshot.partPaymentSubmode.takeIf { it.isNotBlank() }?.let { "Amount Paid (via ${escapeHtml(it)})" } ?: "Amount Paid"
+        val dueDateLabel = snapshot.dueDateLabel.ifBlank { "Not specified" }
+        val bodyRows = if (mode == "CREDIT") {
+            buildList {
+                add("<tr><td>Total Amount on Credit</td><td class='r'>Rs. ${formatMoney(snapshot.currentInvoiceAmount)}</td></tr>")
+                add("<tr><td>Amount Received So Far</td><td class='r'>Rs. ${formatMoney(snapshot.partPaymentReceived)}</td></tr>")
+                add("<tr><td class='b'>Outstanding Balance</td><td class='r b'>Rs. ${formatMoney(snapshot.balanceDue)}</td></tr>")
+                add("<tr><td>Due Date</td><td class='r'>${escapeHtml(dueDateLabel)}</td></tr>")
+            }
+        } else {
+            buildList {
+                add("<tr><td>Invoice Total</td><td class='r'>Rs. ${formatMoney(snapshot.currentInvoiceAmount)}</td></tr>")
+                add("<tr><td>$paidLabel</td><td class='r'>Rs. ${formatMoney(snapshot.partPaymentReceived)}</td></tr>")
+                add("<tr><td class='b'>Balance Due</td><td class='r b'>Rs. ${formatMoney(snapshot.balanceDue)}</td></tr>")
+                add("<tr><td>Due Date</td><td class='r'>${escapeHtml(dueDateLabel)}</td></tr>")
+            }
+        }
+        return """
+        <table class='psummary'>
+          <tr><td colspan='2' style='font-weight:bold;background:#f8f8f8;'>$header</td></tr>
+          ${bodyRows.joinToString("")}
+        </table>
+        """.trimIndent()
+    }
+
+    private fun buildGstBreakupHtml(
+        document: InvoiceDocument,
+        isGst: Boolean,
+        isIntrastate: Boolean
+    ): String {
+        if (!isGst || document.totals.totalTaxAmount <= 0.0) return ""
+        val taxRows = document.taxSummary.joinToString("") { summary ->
+            val rightRate = if (isIntrastate) rateLabel(summary.sgstRate) else rateLabel(summary.igstRate)
+            val rightAmount = if (isIntrastate) formatMoney(summary.sgstAmount) else formatMoney(summary.igstAmount)
+            """
+            <tr>
+              <td>${escapeHtml(summary.hsnCode)}</td>
+              <td class='r'>${formatMoney(summary.taxableValue)}</td>
+              <td class='c'>${rateLabel(summary.cgstRate)}</td>
+              <td class='r'>${formatMoney(summary.cgstAmount)}</td>
+              <td class='c'>$rightRate</td>
+              <td class='r'>$rightAmount</td>
+              <td class='r'>${formatMoney(summary.totalTaxAmount)}</td>
+            </tr>
+            """.trimIndent()
+        }
+        val totalRightAmount = if (isIntrastate) formatMoney(document.totals.sgst) else formatMoney(document.totals.igst)
+        return """
+        <table>
+          <tr class='gthdr'>
+            <th rowspan='2' style='width:20%;'>HSN/SAC</th>
+            <th rowspan='2' style='width:15%;'>Taxable Value</th>
+            <th colspan='2' style='width:25%;'>CGST</th>
+            <th colspan='2' style='width:25%;'>${if (isIntrastate) "SGST/UTGST" else "IGST"}</th>
+            <th rowspan='2' style='width:15%;'>Total Tax Amount</th>
+          </tr>
+          <tr class='gthdr'>
+            <th>Rate</th>
+            <th>Amount</th>
+            <th>Rate</th>
+            <th>Amount</th>
+          </tr>
+          $taxRows
+          <tr class='tot'>
+            <td class='r b'>Total</td>
+            <td class='r b'>${formatMoney(document.totals.taxableAmount)}</td>
+            <td class='c b'>${rateLabel(document.taxSummary.firstOrNull()?.cgstRate ?: 0.0)}</td>
+            <td class='r b'>${formatMoney(document.totals.cgst)}</td>
+            <td class='c b'>${if (isIntrastate) rateLabel(document.taxSummary.firstOrNull()?.sgstRate ?: 0.0) else rateLabel(document.taxSummary.firstOrNull()?.igstRate ?: 0.0)}</td>
+            <td class='r b'>$totalRightAmount</td>
+            <td class='r b'>${formatMoney(document.totals.totalTaxAmount)}</td>
+          </tr>
+        </table>
+        <div style='padding:6px 0 8px 2px;'>Tax Amount (in words) : <span class='b'>${escapeHtml(document.taxAmountInWords)}</span></div>
         """.trimIndent()
     }
 
@@ -1108,7 +1101,7 @@ object InvoiceGenerator {
         val safeAmount = amount.coerceAtLeast(0.0)
         val rupees = safeAmount.toLong()
         val paise = ((safeAmount - rupees) * 100).roundToInt().coerceIn(0, 99)
-        var result = "Indian Rupees ${numToWords(rupees).trim().ifBlank { "Zero" }}"
+        var result = "INR ${numToWords(rupees).trim().ifBlank { "Zero" }}"
         if (paise > 0) {
             result += " and ${numToWords(paise.toLong()).trim()} Paise"
         }
@@ -1119,7 +1112,9 @@ object InvoiceGenerator {
         val cursor = db.openHelper.readableDatabase.query(
             """
             SELECT payment_mode, partial_amount_paid, partial_payment_submode, credit_due_date,
-                   remaining_credit_amount, is_advance, advance_for
+                   remaining_credit_amount, is_advance, advance_for,
+                   COALESCE(NULLIF(reference_no, ''), NULLIF(referenceNo, ''), ''),
+                   COALESCE(NULLIF(other_references, ''), '')
             FROM vouchers WHERE id = ?
             """.trimIndent(),
             arrayOf(voucherId)
@@ -1133,7 +1128,9 @@ object InvoiceGenerator {
                     creditDueDate = it.getString(3).orEmpty(),
                     remainingCreditAmount = it.getDouble(4),
                     isAdvance = it.getInt(5) == 1,
-                    advanceFor = it.getString(6).orEmpty()
+                    advanceFor = it.getString(6).orEmpty(),
+                    referenceNo = it.getString(7).orEmpty(),
+                    otherReferences = it.getString(8).orEmpty()
                 )
             } else {
                 VoucherRenderExtras()
@@ -1181,6 +1178,38 @@ suspend fun printInvoice(
     bundle: InvoiceGenerator.InvoiceRenderBundle
 ) {
     InvoiceGenerator.printBundle(context, bundle)
+}
+
+fun printInvoice(
+    context: Context,
+    htmlContent: String,
+    voucherNo: String
+) {
+    val webView = WebView(context)
+    configureInvoiceWebView(webView)
+    webView.webViewClient = object : WebViewClient() {
+        override fun onPageFinished(view: WebView?, url: String?) {
+            Handler(Looper.getMainLooper()).postDelayed({
+                val printManager = context.getSystemService(Context.PRINT_SERVICE) as PrintManager
+                val safeName = voucherNo.replace("/", "-")
+                val adapter = view!!.createPrintDocumentAdapter(safeName)
+                printManager.print(
+                    safeName,
+                    adapter,
+                    PrintAttributes.Builder()
+                        .setMediaSize(PrintAttributes.MediaSize.ISO_A4)
+                        .build()
+                )
+            }, 500)
+        }
+    }
+    webView.loadDataWithBaseURL(
+        "file:///",
+        htmlContent,
+        "text/html",
+        "UTF-8",
+        null
+    )
 }
 
 fun shareInvoicePdf(

@@ -148,11 +148,16 @@ fun suggestHsn(keyword: String, products: List<Product>): HsnResult? {
 }
 
 fun filterDecimalInput(input: String): String {
-    val filtered = input.filter { it.isDigit() || it == '.' }
-    val dotIndex = filtered.indexOf('.')
-    if (dotIndex < 0) return filtered
-    return filtered.substring(0, dotIndex + 1) +
-        filtered.substring(dotIndex + 1).filter { it.isDigit() }
+    val cleaned = input.filter { it.isDigit() || it == '.' }
+    val dotCount = cleaned.count { it == '.' }
+    return if (dotCount > 1) {
+        val firstDot = cleaned.indexOf('.')
+        cleaned.filterIndexed { index, c ->
+            c != '.' || index == firstDot
+        }
+    } else {
+        cleaned
+    }
 }
 
 fun filterHsnInput(input: String): String = input.filter { it.isDigit() }

@@ -1,16 +1,19 @@
 package com.example.ui.screens
 
 import android.content.Intent
+import android.net.Uri
+import android.print.PrintAttributes
+import android.print.PrintManager
+import android.os.Handler
+import android.os.Looper
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -25,14 +28,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.outlined.Download
-import androidx.compose.material.icons.outlined.OpenInNew
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Print
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Send
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -42,6 +44,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -59,7 +63,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -67,9 +70,9 @@ import androidx.core.content.FileProvider
 import com.example.services.ExportStorageManager
 import com.example.services.InvoiceGenerator
 import com.example.services.configureInvoiceWebView
-import com.example.services.emailInvoicePdf
 import com.example.services.exportInvoicePdf
 import com.example.services.printInvoice
+import com.example.services.shareInvoicePdf
 import com.example.services.shareInvoicePdfToWhatsApp
 import com.example.ui.AppViewModel
 import com.example.ui.theme.AppColors
@@ -91,6 +94,7 @@ fun InvoiceScreen(
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var lastGeneratedPdf by remember { mutableStateOf<java.io.File?>(null) }
     var lastExportResult by remember { mutableStateOf<ExportStorageManager.ExportResult?>(null) }
+    val snackbarHostState = remember { SnackbarHostState() }
 
     fun refreshBundle() {
         scope.launch {
@@ -104,8 +108,7 @@ fun InvoiceScreen(
         refreshBundle()
     }
 
-    fun openPdf(file: java.io.File) {
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
+    fun openPdfUri(uri: Uri) {
         val intent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, "application/pdf")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -115,6 +118,11 @@ fun InvoiceScreen(
         }.onFailure {
             Toast.makeText(context, "No PDF viewer found", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    fun openPdf(file: java.io.File) {
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
+        openPdfUri(uri)
     }
 
     fun runPdfAction(action: suspend (InvoiceGenerator.InvoiceRenderBundle, java.io.File) -> Unit) {
@@ -140,6 +148,7 @@ fun InvoiceScreen(
 
     Scaffold(
         containerColor = AppColors.screenBg,
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
@@ -221,69 +230,48 @@ fun InvoiceScreen(
                 }
 
                 Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .navigationBarsPadding(),
-                    color = MaterialTheme.colorScheme.background,
-                    shadowElevation = 4.dp
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.surface,
+                    shadowElevation = 8.dp,
+                    tonalElevation = 2.dp
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .border(1.dp, Color(0x14000000))
-                            .padding(horizontal = 10.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            .navigationBarsPadding()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        BottomActionItem(
-                            icon = { Icon(Icons.Outlined.Send, contentDescription = "Email", modifier = Modifier.size(20.dp), tint = Color(0xFF555555)) },
-                            label = "Email",
+                        InvoiceActionButton(
+                            icon = Icons.Outlined.Share,
+                            label = "Share",
                             enabled = !isWorking,
                             onClick = {
-                                runPdfAction { freshBundle, pdfFile ->
-                                    emailInvoicePdf(
-                                        context = context,
-                                        pdfFile = pdfFile,
-                                        recipient = freshBundle.document.buyer?.email,
-                                        subject = "Invoice ${freshBundle.document.invoiceNumber}",
-                                        body = "Please find attached invoice ${freshBundle.document.invoiceNumber}."
-                                    )
-                                }
-                            },
-                            modifier = Modifier.weight(1f)
+                                runPdfAction { _, pdfFile -> shareInvoicePdf(context, pdfFile) }
+                            }
                         )
-                        BottomActionItem(
-                            icon = { Icon(Icons.Outlined.OpenInNew, contentDescription = "Open", modifier = Modifier.size(20.dp), tint = Color(0xFF555555)) },
-                            label = "Open",
-                            enabled = !isWorking && lastGeneratedPdf != null,
-                            onClick = { lastGeneratedPdf?.let(::openPdf) },
-                            modifier = Modifier.weight(1f)
-                        )
-                        Button(
+                        InvoiceActionButton(
+                            icon = Icons.Outlined.Download,
+                            label = "Download",
+                            tint = Color(0xFF1A73E8),
+                            enabled = !isWorking,
                             onClick = {
-                                runPdfAction { freshBundle, pdfFile ->
+                                runPdfAction { _, pdfFile ->
                                     lastExportResult = exportInvoicePdf(context, pdfFile)
-                                    Toast.makeText(
-                                        context,
-                                        "Saved ${lastExportResult?.fileName} to ${lastExportResult?.locationLabel}",
-                                        Toast.LENGTH_LONG
-                                    ).show()
+                                    val exportResult = lastExportResult ?: return@runPdfAction
+                                    val action = snackbarHostState.showSnackbar(
+                                        message = "Invoice saved to Downloads: ${exportResult.fileName}",
+                                        actionLabel = "Open"
+                                    )
+                                    if (action == androidx.compose.material3.SnackbarResult.ActionPerformed) {
+                                        ExportStorageManager.openFile(context, exportResult)
+                                    }
                                 }
-                            },
-                            modifier = Modifier
-                                .height(46.dp)
-                                .weight(1.4f),
-                            enabled = !isWorking,
-                            shape = RoundedCornerShape(22.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = AppColors.primary),
-                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp)
-                        ) {
-                            Icon(Icons.Outlined.Download, contentDescription = "Download", tint = Color.White, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Download", color = Color.White, fontSize = 12.sp, maxLines = 1)
-                        }
-                        BottomActionItem(
-                            icon = { Icon(Icons.Outlined.Print, contentDescription = "Print", modifier = Modifier.size(20.dp), tint = Color(0xFF555555)) },
+                            }
+                        )
+                        InvoiceActionButton(
+                            icon = Icons.Outlined.Print,
                             label = "Print",
                             enabled = !isWorking,
                             onClick = {
@@ -292,32 +280,31 @@ fun InvoiceScreen(
                                     val freshBundle = viewModel.getInvoiceRenderBundle(voucherId)
                                     if (freshBundle != null) {
                                         renderBundle = freshBundle
-                                        runCatching { printInvoice(context, freshBundle) }
-                                            .onFailure { Toast.makeText(context, it.message ?: "Print failed", Toast.LENGTH_LONG).show() }
+                                        runCatching {
+                                            printInvoice(context, freshBundle.html, freshBundle.document.invoiceNumber)
+                                        }.onFailure {
+                                            Toast.makeText(context, it.message ?: "Print failed", Toast.LENGTH_LONG).show()
+                                        }
                                     }
                                     isWorking = false
                                 }
-                            },
-                            modifier = Modifier.weight(1f)
+                            }
                         )
-                        BottomActionItem(
-                            icon = { Icon(Icons.Outlined.Refresh, contentDescription = "Refresh", modifier = Modifier.size(20.dp), tint = Color(0xFF555555)) },
-                            label = "Refresh",
-                            enabled = !isWorking,
-                            onClick = { refreshBundle() },
-                            modifier = Modifier.weight(1f)
-                        )
-                        BottomActionItem(
-                            icon = { Icon(Icons.Outlined.Send, contentDescription = "WhatsApp", modifier = Modifier.size(20.dp), tint = Color(0xFF555555)) },
+                        InvoiceActionButton(
+                            icon = Icons.Outlined.Send,
                             label = "WhatsApp",
                             enabled = !isWorking,
-                            fontSize = 10.sp,
                             onClick = {
                                 runPdfAction { _, pdfFile ->
                                     shareInvoicePdfToWhatsApp(context, pdfFile)
                                 }
-                            },
-                            modifier = Modifier.weight(1f)
+                            }
+                        )
+                        InvoiceActionButton(
+                            icon = Icons.Outlined.Close,
+                            label = "Close",
+                            enabled = !isWorking,
+                            onClick = onNavigateBack
                         )
                     }
                 }
@@ -327,27 +314,31 @@ fun InvoiceScreen(
 }
 
 @Composable
-private fun BottomActionItem(
-    icon: @Composable () -> Unit,
+private fun InvoiceActionButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
     enabled: Boolean,
-    modifier: Modifier = Modifier,
-    fontSize: TextUnit = 11.sp,
+    tint: Color = Color(0xFF555555),
     onClick: () -> Unit
 ) {
     Column(
-        modifier = modifier
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        modifier = Modifier
+            .width(64.dp)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(vertical = 4.dp)
     ) {
-        icon()
-        Spacer(modifier = Modifier.height(4.dp))
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = if (enabled) tint else Color(0xFFAAAAAA),
+            modifier = Modifier.size(24.dp)
+        )
+        Spacer(Modifier.height(3.dp))
         Text(
             text = label,
-            fontSize = fontSize,
-            color = if (enabled) Color(0xFF555555) else Color(0xFFAAAAAA),
+            fontSize = 10.sp,
+            color = if (enabled) tint else Color(0xFFAAAAAA),
             textAlign = TextAlign.Center,
             maxLines = 1
         )

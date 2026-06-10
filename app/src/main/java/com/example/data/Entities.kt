@@ -52,7 +52,15 @@ data class BusinessProfile(
     val showAmountInWords: Boolean = true,
     val showTaxAmountInWords: Boolean = true,
     val fyLabel: String = FinancialYearUtils.currentFinancialYearCode(),
-    val termsAndConditions: String = "1. Goods once sold will not be taken back.\n2. Payment due within agreed credit period.\n3. Subject to local jurisdiction.",
+    val termsAndConditions: String = DEFAULT_TERMS_AND_CONDITIONS,
+    @ColumnInfo(name = "smtp_email")
+    val smtpEmail: String = "",
+    @ColumnInfo(name = "smtp_password")
+    val smtpPassword: String = "",
+    @ColumnInfo(name = "smtp_host")
+    val smtpHost: String = "smtp.gmail.com",
+    @ColumnInfo(name = "smtp_port")
+    val smtpPort: String = "587",
     val createdAt: Long = System.currentTimeMillis()
 )
 
@@ -72,6 +80,11 @@ data class Party(
     val pan: String?,
     val openingBalance: Double,
     val balanceType: String, // "DR" or "CR"
+    @ColumnInfo(name = "credit_limit")
+    val creditLimit: Double = 0.0,
+    @ColumnInfo(name = "credit_days")
+    val creditDays: Int = 0,
+    val notes: String = "",
     val createdAt: Long = System.currentTimeMillis()
 )
 

@@ -9,8 +9,11 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Assignment
 import androidx.compose.material.icons.filled.GridView
@@ -18,10 +21,12 @@ import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -31,12 +36,17 @@ import androidx.compose.ui.unit.sp
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import android.widget.Toast
+import com.example.data.AppPreferences
+import com.example.data.ChangelogData
+import com.example.data.ChangelogLoader
 import com.example.ui.AppViewModel
 import com.example.ui.DashboardViewModel
 import com.example.ui.screens.*
 import com.example.ui.theme.LocalAppTheme
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.ThemeViewModel
+import kotlinx.coroutines.launch
 
 sealed class Screen {
     object Setup : Screen()
@@ -193,6 +203,23 @@ fun MainAppEntry(
                 val sp = remember { context.getSharedPreferences("zerobook_pref", Context.MODE_PRIVATE) }
                 var pinRequired by remember { mutableStateOf(sp.getBoolean("pin_enabled", false)) }
                 var pinAuthed by remember { mutableStateOf(false) }
+                var changelogData by remember { mutableStateOf<ChangelogData?>(null) }
+                var showChangelog by remember { mutableStateOf(false) }
+                val uiScope = rememberCoroutineScope()
+
+                LaunchedEffect(isSetupCompleted, pinRequired, pinAuthed) {
+                    if (isSetupCompleted && (!pinRequired || pinAuthed)) {
+                        viewModel.autoAdvanceFinancialYearIfNeeded(context)?.let { updatedFy ->
+                            Toast.makeText(context, "Financial year updated to FY $updatedFy", Toast.LENGTH_LONG).show()
+                        }
+                        val loadedChangelog = ChangelogLoader.load(context)
+                        val lastSeenVersion = AppPreferences.getLastSeenChangelogVersion(context)
+                        if (loadedChangelog != null && (lastSeenVersion == null || lastSeenVersion != loadedChangelog.version)) {
+                            changelogData = loadedChangelog
+                            showChangelog = true
+                        }
+                    }
+                }
 
                 val currentScreen = if (!isSetupCompleted) {
                     Screen.Setup
@@ -426,6 +453,49 @@ fun MainAppEntry(
                                 }
                             }
                         }
+                    }
+
+                    if (showChangelog && changelogData != null) {
+                        val configuration = LocalConfiguration.current
+                        AlertDialog(
+                            onDismissRequest = {},
+                            confirmButton = {
+                                Button(
+                                    onClick = {
+                                        val version = changelogData?.version.orEmpty()
+                                        if (version.isNotBlank()) {
+                                            uiScope.launch {
+                                                AppPreferences.setLastSeenChangelogVersion(context, version)
+                                                showChangelog = false
+                                            }
+                                        } else {
+                                            showChangelog = false
+                                        }
+                                    }
+                                ) {
+                                    Text("Got it")
+                                }
+                            },
+                            title = {
+                                Text("What's New in ZeroBook ${changelogData?.version.orEmpty()}")
+                            },
+                            text = {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(max = configuration.screenHeightDp.dp * 0.6f)
+                                        .verticalScroll(rememberScrollState()),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    changelogData?.changes?.forEach { change ->
+                                        Text("• $change", color = Color(0xFF111827))
+                                    }
+                                }
+                            },
+                            containerColor = Color.White,
+                            textContentColor = Color(0xFF111827),
+                            titleContentColor = Color(0xFF111827)
+                        )
                     }
                 }
 }

@@ -6,6 +6,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.map
+import java.text.SimpleDateFormat
+import java.util.Locale
 import java.util.UUID
 import androidx.sqlite.db.SimpleSQLiteQuery
 import org.json.JSONObject
@@ -227,29 +229,29 @@ class AppRepository(private val db: AppDatabase) {
             // Sync with LedgerAccount
             val existingAct = db.ledgerAccountDao().getLedgerAccountByPartyId(party.id)
             val group = if (party.type == "CUSTOMER") "Sundry Debtors" else "Sundry Creditors"
-            val balanceType = if (party.type == "CUSTOMER") "DR" else "CR"
+            val ledgerBalanceType = party.balanceType
             val act = existingAct?.copy(
                 name = party.name,
                 groupName = group,
                 openingBalance = party.openingBalance,
-                balanceType = balanceType,
+                balanceType = ledgerBalanceType,
                 gstin = party.gstin ?: "",
-                phone = party.phone ?: "",
-                email = party.email ?: "",
-                address = party.address ?: ""
+                phone = party.phone,
+                email = party.email,
+                address = party.address
             ) ?: LedgerAccount(
                 id = UUID.randomUUID().toString(),
                 name = party.name,
                 groupName = group,
                 openingBalance = party.openingBalance,
-                balanceType = balanceType,
+                balanceType = ledgerBalanceType,
                 isSystem = 0,
                 isParty = 1,
                 partyId = party.id,
                 gstin = party.gstin ?: "",
-                phone = party.phone ?: "",
-                email = party.email ?: "",
-                address = party.address ?: ""
+                phone = party.phone,
+                email = party.email,
+                address = party.address
             )
             db.ledgerAccountDao().insertLedgerAccount(act)
             db.partyFinancialYearBalanceDao().upsertBalance(
@@ -265,7 +267,46 @@ class AppRepository(private val db: AppDatabase) {
                     accountId = act.id,
                     financialYearCode = financialYearCode,
                     openingBalance = party.openingBalance,
-                    balanceType = balanceType
+                    balanceType = ledgerBalanceType
+                )
+            )
+        }
+    }
+
+    suspend fun updateParty(party: Party, financialYearCode: String) {
+        db.withTransaction {
+            ensureFinancialYearExists(financialYearCode)
+            db.partyDao().insertParty(party)
+            db.partyFinancialYearBalanceDao().upsertBalance(
+                PartyFinancialYearBalance(
+                    partyId = party.id,
+                    financialYearCode = financialYearCode,
+                    openingBalance = party.openingBalance,
+                    balanceType = party.balanceType,
+                    updatedAt = System.currentTimeMillis()
+                )
+            )
+            db.openHelper.writableDatabase.execSQL(
+                """
+                UPDATE ledger_accounts
+                SET name = ?,
+                    openingBalance = ?,
+                    balanceType = ?,
+                    gstin = ?,
+                    phone = ?,
+                    email = ?,
+                    address = ?
+                WHERE partyId = ?
+                """.trimIndent(),
+                arrayOf(
+                    party.name,
+                    party.openingBalance,
+                    party.balanceType,
+                    party.gstin.orEmpty(),
+                    party.phone,
+                    party.email,
+                    party.address,
+                    party.id
                 )
             )
         }
@@ -895,9 +936,8 @@ class AppRepository(private val db: AppDatabase) {
             // 5. Auto-register Credit Sale under BillReceivable
             if (resolvedVoucher.type == "SALE" && (resolvedVoucher.paymentMode == "CREDIT" || resolvedVoucher.paymentMode == "PART PAYMENT") && resolvedVoucher.partyId != null) {
                 val creditPeriodMs = 15L * 24L * 3600L * 1000L // 15 days credit term
-                val dueDateVal = extras.creditDueDate.takeIf { it.isNotBlank() }?.let {
-                    runCatching { it.toLong() }.getOrNull()
-                } ?: (resolvedVoucher.date + creditPeriodMs)
+                val dueDateVal = extras.creditDueDate.takeIf { it.isNotBlank() }?.let(::parseCreditDueDateToMillis)
+                    ?: (resolvedVoucher.date + creditPeriodMs)
                 val originalOutstanding = if (resolvedVoucher.paymentMode == "PART PAYMENT") extras.remainingCreditAmount else resolvedVoucher.netAmount
                 val bill = BillReceivable(
                     id = UUID.randomUUID().toString(),
@@ -956,6 +996,10 @@ class AppRepository(private val db: AppDatabase) {
             val v = db.voucherDao().getVoucherById(bill.voucherId)
             if (v != null) {
                 db.voucherDao().insertVoucher(v.copy(outstandingAmount = outstanding))
+                db.openHelper.writableDatabase.execSQL(
+                    "UPDATE vouchers SET remaining_credit_amount = ? WHERE id = ?",
+                    arrayOf(outstanding, bill.voucherId)
+                )
             }
         }
 
@@ -1017,6 +1061,25 @@ class AppRepository(private val db: AppDatabase) {
                 voucherId
             )
         )
+    }
+
+    private fun parseCreditDueDateToMillis(raw: String): Long? {
+        raw.toLongOrNull()?.let { return it }
+        val patterns = listOf("dd-MMM-yyyy", "dd-MMM-yy", "dd-MM-yyyy")
+        return patterns.firstNotNullOfOrNull { pattern ->
+            runCatching {
+                SimpleDateFormat(pattern, Locale.ENGLISH).parse(raw)?.time
+            }.getOrNull()
+        }?.let { parsed ->
+            val calendar = java.util.Calendar.getInstance().apply {
+                timeInMillis = parsed
+                set(java.util.Calendar.HOUR_OF_DAY, 0)
+                set(java.util.Calendar.MINUTE, 0)
+                set(java.util.Calendar.SECOND, 0)
+                set(java.util.Calendar.MILLISECOND, 0)
+            }
+            calendar.timeInMillis
+        }
     }
 
     // Direct Cash/Bank manual transaction

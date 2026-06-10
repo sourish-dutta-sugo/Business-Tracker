@@ -5,6 +5,7 @@ import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.AdditionalCharge
+import com.example.data.AppPreferences
 import com.example.data.AppDatabase
 import com.example.data.AppRepository
 import com.example.data.BankCashTransaction
@@ -19,6 +20,7 @@ import com.example.data.ReceiptAllocation
 import com.example.data.Voucher
 import com.example.data.VoucherItem
 import com.example.data.VoucherSaveExtras
+import com.example.data.EmailReminderScheduler
 import com.example.services.ExportStorageManager
 import com.example.services.ExportTarget
 import com.example.services.InvoiceGenerator
@@ -32,6 +34,7 @@ import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.time.LocalDate
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class AppViewModel(application: Application) : AndroidViewModel(application) {
@@ -178,6 +181,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun saveProfile(profile: BusinessProfile, onSuccess: () -> Unit) {
         viewModelScope.launch {
             repository.insertProfile(profile.copy(fyLabel = financialYear.value))
+            syncBusinessProfileTerms(profile.termsAndConditions)
             isSetupCompleted.value = true
             onSuccess()
         }
@@ -186,6 +190,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun updateProfile(profile: BusinessProfile, onSuccess: () -> Unit) {
         viewModelScope.launch {
             repository.insertProfile(profile)
+            syncBusinessProfileTerms(profile.termsAndConditions)
             onSuccess()
         }
     }
@@ -204,6 +209,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             repository.insertParty(party, financialYear.value)
             onSuccess()
         }
+    }
+
+    fun updateParty(party: Party, onSuccess: () -> Unit) {
+        viewModelScope.launch {
+            repository.updateParty(party, financialYear.value)
+            onSuccess()
+        }
+    }
+
+    fun scheduleDueReminder(voucherId: String, creditDueDate: String) {
+        EmailReminderScheduler.scheduleDueReminder(
+            context = getApplication(),
+            voucherId = voucherId,
+            partyEmail = "",
+            creditDueDate = creditDueDate
+        )
     }
 
     fun getPartyById(partyId: String): Party? = parties.value.find { it.id == partyId }
@@ -281,6 +302,49 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     suspend fun getInvoiceRenderBundle(voucherId: String): InvoiceGenerator.InvoiceRenderBundle? =
         InvoiceGenerator.buildRenderBundle(getApplication(), voucherId)
+
+    suspend fun getSaleVoucherReferenceFields(voucherId: String): Pair<String, String> {
+        val db = AppDatabase.getDatabase(getApplication())
+        val cursor = db.openHelper.readableDatabase.query(
+            """
+            SELECT COALESCE(NULLIF(reference_no, ''), NULLIF(referenceNo, ''), ''),
+                   COALESCE(NULLIF(other_references, ''), '')
+            FROM vouchers
+            WHERE id = ?
+            """.trimIndent(),
+            arrayOf(voucherId)
+        )
+        cursor.use {
+            return if (it.moveToFirst()) {
+                it.getString(0).orEmpty() to it.getString(1).orEmpty()
+            } else {
+                "" to ""
+            }
+        }
+    }
+
+    fun syncSaleVoucherReferenceFields(voucherId: String, referenceNo: String, otherReferences: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val db = AppDatabase.getDatabase(getApplication())
+            db.openHelper.writableDatabase.execSQL(
+                """
+                UPDATE vouchers
+                SET reference_no = ?,
+                    other_references = ?
+                WHERE id = ?
+                """.trimIndent(),
+                arrayOf(referenceNo, otherReferences, voucherId)
+            )
+        }
+    }
+
+    private suspend fun syncBusinessProfileTerms(termsAndConditions: String) {
+        val db = AppDatabase.getDatabase(getApplication())
+        db.openHelper.writableDatabase.execSQL(
+            "UPDATE business_profile SET terms_and_conditions = ? WHERE id = 1",
+            arrayOf(termsAndConditions)
+        )
+    }
 
     fun saveTransaction(tx: BankCashTransaction, onSuccess: () -> Unit) {
         viewModelScope.launch {
@@ -424,5 +488,32 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+    }
+
+    suspend fun autoAdvanceFinancialYearIfNeeded(context: Context): String? {
+        val today = LocalDate.now()
+        val lastCheckedDate = AppPreferences.getFyLastCheckedDate(context)
+        if (lastCheckedDate == today) return null
+
+        val activeProfile = profile.value ?: repository.getProfileSync()
+        val currentFyCode = activeProfile?.fyLabel?.ifBlank { FinancialYearUtils.currentFinancialYearCode() }
+            ?: FinancialYearUtils.currentFinancialYearCode()
+        val fyEndDate = FinancialYearUtils.endDateFor(currentFyCode)
+        val updatedLabel = if (today.isAfter(fyEndDate)) {
+            val newFyCode = FinancialYearUtils.financialYearCodeFor(today)
+            if (newFyCode != currentFyCode) {
+                repository.ensureFinancialYearExists(newFyCode)
+                financialYear.value = newFyCode
+                activeProfile?.let { repository.insertProfile(it.copy(fyLabel = newFyCode)) }
+                newFyCode
+            } else {
+                null
+            }
+        } else {
+            null
+        }
+
+        AppPreferences.setFyLastCheckedDate(context, today)
+        return updatedLabel
     }
 }

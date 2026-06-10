@@ -24,7 +24,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         BillReceivable::class,
         FinancialYearAuditLog::class
     ],
-    version = 9,
+    version = 10,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -55,20 +55,24 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "ZeroBook.db"
                 )
-                .addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
+                .addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
                 .addCallback(object : RoomDatabase.Callback() {
                     override fun onCreate(db: SupportSQLiteDatabase) {
                         super.onCreate(db)
                         ensureVoucherExtensionColumns(db)
                         ensureBusinessProfileExtensionColumns(db)
+                        ensurePartyExtensionColumns(db)
                         ensureFinancialYearColumnsAndIndexes(db)
+                        ensureReminderScheduleTable(db)
                     }
 
                     override fun onOpen(db: SupportSQLiteDatabase) {
                         super.onOpen(db)
                         ensureVoucherExtensionColumns(db)
                         ensureBusinessProfileExtensionColumns(db)
+                        ensurePartyExtensionColumns(db)
                         ensureFinancialYearColumnsAndIndexes(db)
+                        ensureReminderScheduleTable(db)
                     }
                 })
                 .build()

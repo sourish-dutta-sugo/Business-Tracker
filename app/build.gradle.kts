@@ -52,6 +52,12 @@ android {
     compose = true
     buildConfig = true
   }
+  packaging {
+    resources {
+      excludes += "META-INF/NOTICE.md"
+      excludes += "META-INF/LICENSE.md"
+    }
+  }
   testOptions { unitTests { isIncludeAndroidResources = true } }
 }
 
@@ -90,7 +96,8 @@ dependencies {
   implementation(libs.androidx.compose.ui.tooling.preview)
   implementation(libs.androidx.core.ktx)
   implementation("androidx.core:core-splashscreen:1.0.1")
-  // implementation(libs.androidx.datastore.preferences)
+  implementation(libs.androidx.datastore.preferences)
+  implementation("androidx.work:work-runtime-ktx:2.10.1")
   implementation(libs.androidx.lifecycle.runtime.compose)
   implementation(libs.androidx.lifecycle.runtime.ktx)
   implementation(libs.androidx.lifecycle.viewmodel.compose)
@@ -108,6 +115,8 @@ dependencies {
   implementation("com.google.mlkit:text-recognition:16.0.1")
   // implementation(libs.play.services.location)
   implementation(libs.retrofit)
+  implementation("com.sun.mail:android-mail:1.6.7")
+  implementation("com.sun.mail:android-activation:1.6.7")
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)

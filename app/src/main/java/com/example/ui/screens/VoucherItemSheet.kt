@@ -530,8 +530,8 @@ fun DecimalInputField(
             } else {
                 hadFocus = false
                 if (displayValue.isBlank()) {
-                    displayValue = ""
-                    onValueChange("")
+                    displayValue = "0"
+                    onValueChange("0")
                 }
             }
         },

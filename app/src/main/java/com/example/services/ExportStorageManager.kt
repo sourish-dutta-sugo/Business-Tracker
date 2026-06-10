@@ -12,11 +12,11 @@ import java.io.File
 import java.io.FileInputStream
 
 enum class ExportTarget(val relativeDir: String) {
-    Invoices("Documents/ZeroBook/Invoices"),
-    Statements("Documents/ZeroBook/Statements"),
-    Exports("Documents/ZeroBook/Exports"),
-    Backups("Documents/ZeroBook/Backups"),
-    Reports("Documents/ZeroBook/Reports")
+    Invoices("${Environment.DIRECTORY_DOWNLOADS}/ZeroBook/Invoices"),
+    Statements("${Environment.DIRECTORY_DOWNLOADS}/ZeroBook/Statements"),
+    Exports("${Environment.DIRECTORY_DOWNLOADS}/ZeroBook"),
+    Backups("${Environment.DIRECTORY_DOWNLOADS}/ZeroBook/Backups"),
+    Reports("${Environment.DIRECTORY_DOWNLOADS}/ZeroBook/Reports")
 }
 
 object ExportStorageManager {
@@ -51,8 +51,10 @@ object ExportStorageManager {
             resolver.update(uri, values, null, null)
             ExportResult(displayName, "${target.relativeDir}/$displayName", uri, mimeType)
         } else {
-            val root = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
-            val exportDir = File(root, target.relativeDir.removePrefix("Documents/"))
+            val exportDir = File(
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                target.relativeDir.removePrefix("${Environment.DIRECTORY_DOWNLOADS}/")
+            )
             if (!exportDir.exists()) exportDir.mkdirs()
             val exportedFile = File(exportDir, displayName)
             exportedFile.writeBytes(bytes)

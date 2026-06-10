@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Phone
@@ -53,6 +54,7 @@ fun PartiesScreen(
     var searchQuery by remember { mutableStateOf("") }
     var selectedTypeFilter by remember { mutableStateOf("ALL") } // "ALL", "CUSTOMER", "SUPPLIER"
     var showAddPartyForm by remember { mutableStateOf(false) }
+    var editingPartyId by remember { mutableStateOf<String?>(null) }
 
     // Computes dynamic balances per party
     val partyBalances = remember(parties, ledgerEntries) {
@@ -216,6 +218,15 @@ fun PartiesScreen(
                                                 horizontalAlignment = Alignment.End,
                                                 modifier = Modifier.weight(0.8f)
                                             ) {
+                                                IconButton(
+                                                    onClick = {
+                                                        selectedPartyId = party.id
+                                                        editingPartyId = party.id
+                                                        showAddPartyForm = false
+                                                    }
+                                                ) {
+                                                    Icon(Icons.Default.Edit, contentDescription = "Edit Party", tint = AppColors.primary)
+                                                }
                                                 val displayBal = Utils.formatIndianCurrency(Math.abs(currentBal))
                                                 val balLabel = if (currentBal >= 0) "DR" else "CR"
                                                 val balColor = if (currentBal >= 0) DangerRed else SuccessGreen
@@ -255,6 +266,12 @@ fun PartiesScreen(
                         viewModel = viewModel,
                         onDismiss = { showAddPartyForm = false }
                     )
+                } else if (editingPartyId != null) {
+                    EditPartyForm(
+                        viewModel = viewModel,
+                        party = parties.firstOrNull { it.id == editingPartyId },
+                        onDismiss = { editingPartyId = null }
+                    )
                 } else {
                     selectedPartyId?.let { pId ->
                         PartyDetailScreen(
@@ -276,6 +293,12 @@ fun PartiesScreen(
             AddPartyForm(
                 viewModel = viewModel,
                 onDismiss = { showAddPartyForm = false }
+            )
+        } else if (editingPartyId != null) {
+            EditPartyForm(
+                viewModel = viewModel,
+                party = parties.firstOrNull { it.id == editingPartyId },
+                onDismiss = { editingPartyId = null }
             )
         } else {
             Scaffold(
@@ -424,6 +447,11 @@ fun PartiesScreen(
                                             horizontalAlignment = Alignment.End,
                                             modifier = Modifier.weight(0.8f)
                                         ) {
+                                            IconButton(
+                                                onClick = { editingPartyId = party.id }
+                                            ) {
+                                                Icon(Icons.Default.Edit, contentDescription = "Edit Party", tint = AppColors.primary)
+                                            }
                                             val displayBal = Utils.formatIndianCurrency(Math.abs(currentBal))
                                             val balLabel = if (currentBal >= 0) "DR (Receivable)" else "CR (Payable)"
                                             val balColor = if (currentBal >= 0) DangerRed else SuccessGreen
@@ -464,6 +492,7 @@ fun AddPartyForm(
     var phone by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var address by remember { mutableStateOf("") }
+    var pin by remember { mutableStateOf("") }
     var city by remember { mutableStateOf("") }
     var selectedStateInfo by remember { mutableStateOf(Utils.INDIAN_STATES[18]) } // WB fallback
     var gstin by remember { mutableStateOf("") }
@@ -471,6 +500,9 @@ fun AddPartyForm(
     var pan by remember { mutableStateOf("") }
     var openingBalStr by remember { mutableStateOf("0") }
     var balanceType by remember { mutableStateOf("DR") } // "DR", "CR"
+    var creditLimitStr by remember { mutableStateOf("0") }
+    var creditDaysStr by remember { mutableStateOf("") }
+    var notes by remember { mutableStateOf("") }
 
     var dropdownExpanded by remember { mutableStateOf(false) }
     var showError by remember { mutableStateOf(false) }
@@ -534,7 +566,7 @@ fun AddPartyForm(
             OutlinedTextField(
                 value = phone,
                 onValueChange = { phone = it },
-                label = { Text("Phone Number *") },
+                label = { Text("Phone Number") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
@@ -554,8 +586,18 @@ fun AddPartyForm(
             OutlinedTextField(
                 value = address,
                 onValueChange = { address = it },
-                label = { Text("Street Address") },
+                label = { Text("Address") },
                 modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(8.dp)
+            )
+
+            OutlinedTextField(
+                value = pin,
+                onValueChange = { pin = it.filter(Char::isDigit).take(6) },
+                label = { Text("PIN Code") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 shape = RoundedCornerShape(8.dp)
             )
 
@@ -644,6 +686,8 @@ fun AddPartyForm(
                     modifier = Modifier.weight(1.2f).onFocusChanged { focusState ->
                         if (focusState.isFocused && (openingBalStr == "0" || openingBalStr == "0.0" || openingBalStr == "0.00")) {
                             openingBalStr = ""
+                        } else if (!focusState.isFocused && openingBalStr.isBlank()) {
+                            openingBalStr = "0"
                         }
                     },
                     singleLine = true,
@@ -663,13 +707,40 @@ fun AddPartyForm(
                 }
             }
 
+            OutlinedTextField(
+                value = creditLimitStr,
+                onValueChange = { creditLimitStr = filterDecimalInput(it) },
+                label = { Text("Credit Limit") },
+                modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                shape = RoundedCornerShape(8.dp)
+            )
+
+            OutlinedTextField(
+                value = creditDaysStr,
+                onValueChange = { creditDaysStr = it.filter(Char::isDigit) },
+                label = { Text("Credit Days") },
+                modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                shape = RoundedCornerShape(8.dp)
+            )
+
+            OutlinedTextField(
+                value = notes,
+                onValueChange = { notes = it },
+                label = { Text("Notes") },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 3,
+                shape = RoundedCornerShape(8.dp)
+            )
+
             if (showError) {
                 Text("Please fill in all mandatory (*) fields correctly.", color = Color.Red, fontSize = 12.sp)
             }
 
             Button(
                 onClick = {
-                    if (name.isBlank() || phone.isBlank()) {
+                    if (name.isBlank()) {
                         showError = true
                     } else {
                         val partyObj = Party(
@@ -682,10 +753,14 @@ fun AddPartyForm(
                             city = city,
                             state = selectedStateInfo.first,
                             stateCode = selectedStateInfo.second,
+                            pin = pin,
                             gstin = if (gstin.isBlank()) null else gstin,
                             pan = if (pan.isBlank()) null else pan,
                             openingBalance = openingBalStr.toDoubleOrNull() ?: 0.0,
-                            balanceType = balanceType
+                            balanceType = balanceType,
+                            creditLimit = creditLimitStr.toDoubleOrNull() ?: 0.0,
+                            creditDays = creditDaysStr.toIntOrNull() ?: 0,
+                            notes = notes.trim()
                         )
                         viewModel.saveParty(partyObj) {
                             onDismiss()
@@ -699,6 +774,140 @@ fun AddPartyForm(
                 Text("Save Party", fontWeight = FontWeight.Bold)
             }
         }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun EditPartyForm(
+    viewModel: AppViewModel,
+    party: Party?,
+    onDismiss: () -> Unit
+) {
+    if (party == null) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text("Party not found", color = AppColors.textSecondary)
+        }
+        return
+    }
+
+    var name by remember(party.id) { mutableStateOf(party.name) }
+    var type by remember(party.id) { mutableStateOf(party.type) }
+    var phone by remember(party.id) { mutableStateOf(party.phone) }
+    var email by remember(party.id) { mutableStateOf(party.email) }
+    var address by remember(party.id) { mutableStateOf(party.address) }
+    var pin by remember(party.id) { mutableStateOf(party.pin) }
+    var city by remember(party.id) { mutableStateOf(party.city) }
+    var selectedStateInfo by remember(party.id) { mutableStateOf(Utils.INDIAN_STATES.find { it.first == party.state } ?: Utils.INDIAN_STATES[18]) }
+    var gstin by remember(party.id) { mutableStateOf(party.gstin.orEmpty()) }
+    var gstinValid by remember { mutableStateOf<Boolean?>(null) }
+    var pan by remember(party.id) { mutableStateOf(party.pan.orEmpty()) }
+    var openingBalStr by remember(party.id) { mutableStateOf(party.openingBalance.toString()) }
+    var balanceType by remember(party.id) { mutableStateOf(party.balanceType) }
+    var creditLimitStr by remember(party.id) { mutableStateOf(party.creditLimit.toString()) }
+    var creditDaysStr by remember(party.id) { mutableStateOf(party.creditDays.takeIf { it > 0 }?.toString().orEmpty()) }
+    var notes by remember(party.id) { mutableStateOf(party.notes) }
+    var dropdownExpanded by remember { mutableStateOf(false) }
+    var showError by remember { mutableStateOf(false) }
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        containerColor = AppColors.screenBg,
+        topBar = {
+            TopAppBar(
+                title = { Text("Edit Party", fontWeight = FontWeight.Bold) },
+                navigationIcon = {
+                    IconButton(onClick = onDismiss) {
+                        Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = AppColors.cardBg)
+            )
+        }
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(innerPadding)
+                .padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 100.dp),
+            verticalArrangement = Arrangement.spacedBy(11.dp)
+        ) {
+            OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Party Name *") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("CUSTOMER", "SUPPLIER", "BOTH").forEach { option ->
+                    FilterChip(selected = type == option, onClick = { type = option }, label = { Text(option) })
+                }
+            }
+            OutlinedTextField(value = phone, onValueChange = { phone = it }, label = { Text("Phone Number") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp))
+            OutlinedTextField(value = email, onValueChange = { email = it }, label = { Text("Email Address") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp))
+            OutlinedTextField(value = address, onValueChange = { address = it }, label = { Text("Address") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp))
+            OutlinedTextField(value = pin, onValueChange = { pin = it.filter(Char::isDigit).take(6) }, label = { Text("PIN Code") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp))
+            OutlinedTextField(value = city, onValueChange = { city = it }, label = { Text("City") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp))
+            Box(modifier = Modifier.fillMaxWidth()) {
+                OutlinedTextField(value = "${selectedStateInfo.first} (${selectedStateInfo.second})", onValueChange = {}, readOnly = true, label = { Text("State") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp), trailingIcon = {
+                    Icon(imageVector = Icons.Default.KeyboardArrowDown, contentDescription = null, modifier = Modifier.clickable { dropdownExpanded = true })
+                })
+                StateDropdownMenu(expanded = dropdownExpanded, onDismissRequest = { dropdownExpanded = false }, onStateSelected = { selectedStateInfo = it; dropdownExpanded = false })
+            }
+            OutlinedTextField(value = gstin, onValueChange = { value ->
+                val result = parseGstinInput(value, pan, selectedStateInfo.first, selectedStateInfo.second)
+                gstin = result.gstin
+                gstinValid = result.valid
+                if (result.valid == true) {
+                    pan = result.pan
+                    result.stateName?.let { name -> Utils.INDIAN_STATES.find { it.first == name }?.let { selectedStateInfo = it } }
+                }
+            }, label = { Text("GSTIN") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp), colors = zeroBookInputColors())
+            GstinValidationFeedback(gstin, gstinValid, pan, selectedStateInfo.first, selectedStateInfo.second)
+            OutlinedTextField(value = pan, onValueChange = { pan = it.uppercase() }, label = { Text("PAN Number") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp))
+            OutlinedTextField(value = openingBalStr, onValueChange = { openingBalStr = filterDecimalInput(it) }, label = { Text("Opening Balance") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("DR", "CR").forEach { option ->
+                    FilterChip(selected = balanceType == option, onClick = { balanceType = option }, label = { Text(option) })
+                }
+            }
+            OutlinedTextField(value = creditLimitStr, onValueChange = { creditLimitStr = filterDecimalInput(it) }, label = { Text("Credit Limit") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp))
+            OutlinedTextField(value = creditDaysStr, onValueChange = { creditDaysStr = it.filter(Char::isDigit) }, label = { Text("Credit Days") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp))
+            OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text("Notes") }, modifier = Modifier.fillMaxWidth(), minLines = 3, shape = RoundedCornerShape(8.dp))
+            if (showError) {
+                Text("Party name is required.", color = Color.Red, fontSize = 12.sp)
+            }
+            Button(
+                onClick = {
+                    if (name.isBlank()) {
+                        showError = true
+                    } else {
+                        viewModel.updateParty(
+                            party.copy(
+                                name = name.trim(),
+                                type = type,
+                                phone = phone.trim(),
+                                email = email.trim(),
+                                address = address.trim(),
+                                pin = pin.trim(),
+                                city = city.trim(),
+                                state = selectedStateInfo.first,
+                                stateCode = selectedStateInfo.second,
+                                gstin = gstin.trim().ifBlank { null },
+                                pan = pan.trim().ifBlank { null },
+                                openingBalance = openingBalStr.toDoubleOrNull() ?: 0.0,
+                                balanceType = balanceType,
+                                creditLimit = creditLimitStr.toDoubleOrNull() ?: 0.0,
+                                creditDays = creditDaysStr.toIntOrNull() ?: 0,
+                                notes = notes.trim()
+                            )
+                        ) {
+                            onDismiss()
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text("Update Party", fontWeight = FontWeight.Bold)
+            }
         }
     }
 }

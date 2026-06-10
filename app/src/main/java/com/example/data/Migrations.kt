@@ -24,6 +24,8 @@ fun ensureVoucherExtensionColumns(db: SupportSQLiteDatabase) {
     ensureColumn("partial_amount_paid", "ALTER TABLE vouchers ADD COLUMN partial_amount_paid REAL DEFAULT 0")
     ensureColumn("partial_payment_submode", "ALTER TABLE vouchers ADD COLUMN partial_payment_submode TEXT DEFAULT ''")
     ensureColumn("credit_due_date", "ALTER TABLE vouchers ADD COLUMN credit_due_date TEXT DEFAULT ''")
+    ensureColumn("reference_no", "ALTER TABLE vouchers ADD COLUMN reference_no TEXT DEFAULT ''")
+    ensureColumn("other_references", "ALTER TABLE vouchers ADD COLUMN other_references TEXT DEFAULT ''")
     ensureColumn("remaining_credit_amount", "ALTER TABLE vouchers ADD COLUMN remaining_credit_amount REAL DEFAULT 0")
     ensureColumn("is_advance", "ALTER TABLE vouchers ADD COLUMN is_advance INTEGER DEFAULT 0")
     ensureColumn("advance_for", "ALTER TABLE vouchers ADD COLUMN advance_for TEXT DEFAULT ''")
@@ -67,8 +69,53 @@ fun ensureBusinessProfileExtensionColumns(db: SupportSQLiteDatabase) {
     ensureColumn("showAmountInWords", "ALTER TABLE business_profile ADD COLUMN showAmountInWords INTEGER NOT NULL DEFAULT 1")
     ensureColumn("showTaxAmountInWords", "ALTER TABLE business_profile ADD COLUMN showTaxAmountInWords INTEGER NOT NULL DEFAULT 1")
     ensureColumn("fyLabel", "ALTER TABLE business_profile ADD COLUMN fyLabel TEXT NOT NULL DEFAULT '2025-26'")
-    ensureColumn("termsAndConditions", "ALTER TABLE business_profile ADD COLUMN termsAndConditions TEXT NOT NULL DEFAULT '1. Goods once sold will not be taken back.\n2. Payment due within agreed credit period.\n3. Subject to local jurisdiction.'")
+    ensureColumn("termsAndConditions", "ALTER TABLE business_profile ADD COLUMN termsAndConditions TEXT NOT NULL DEFAULT '1. Delay in payment beyond the agreed credit period will attract interest @ 24% p.a.\n2. Goods once sold will not be taken back.\n3. Subject to local jurisdiction only.'")
+    ensureColumn("terms_and_conditions", "ALTER TABLE business_profile ADD COLUMN terms_and_conditions TEXT DEFAULT ''")
+    ensureColumn("smtp_email", "ALTER TABLE business_profile ADD COLUMN smtp_email TEXT NOT NULL DEFAULT ''")
+    ensureColumn("smtp_password", "ALTER TABLE business_profile ADD COLUMN smtp_password TEXT NOT NULL DEFAULT ''")
+    ensureColumn("smtp_host", "ALTER TABLE business_profile ADD COLUMN smtp_host TEXT NOT NULL DEFAULT 'smtp.gmail.com'")
+    ensureColumn("smtp_port", "ALTER TABLE business_profile ADD COLUMN smtp_port TEXT NOT NULL DEFAULT '587'")
     ensureColumn("createdAt", "ALTER TABLE business_profile ADD COLUMN createdAt INTEGER NOT NULL DEFAULT 0")
+}
+
+fun ensurePartyExtensionColumns(db: SupportSQLiteDatabase) {
+    val partyColumns = db.query("PRAGMA table_info(parties)").use { cursor ->
+        buildSet {
+            val nameIndex = cursor.getColumnIndex("name")
+            while (cursor.moveToNext()) {
+                add(cursor.getString(nameIndex))
+            }
+        }
+    }
+
+    fun ensureColumn(name: String, sql: String) {
+        if (name !in partyColumns) {
+            db.execSQL(sql)
+        }
+    }
+
+    ensureColumn("credit_limit", "ALTER TABLE parties ADD COLUMN credit_limit REAL NOT NULL DEFAULT 0")
+    ensureColumn("credit_days", "ALTER TABLE parties ADD COLUMN credit_days INTEGER NOT NULL DEFAULT 0")
+    ensureColumn("notes", "ALTER TABLE parties ADD COLUMN notes TEXT NOT NULL DEFAULT ''")
+}
+
+fun ensureReminderScheduleTable(db: SupportSQLiteDatabase) {
+    db.execSQL(
+        """
+        CREATE TABLE IF NOT EXISTS reminder_schedules (
+            id TEXT PRIMARY KEY,
+            party_id TEXT,
+            party_name TEXT,
+            reminder_type TEXT,
+            scheduled_date TEXT,
+            scheduled_time TEXT,
+            interval_days INTEGER DEFAULT 0,
+            is_active INTEGER DEFAULT 1,
+            last_sent TEXT DEFAULT '',
+            created_at INTEGER DEFAULT 0
+        )
+        """.trimIndent()
+    )
 }
 
 fun ensureFinancialYearColumnsAndIndexes(db: SupportSQLiteDatabase) {
@@ -409,5 +456,15 @@ val MIGRATION_8_9 = object : Migration(8, 9) {
         ensureVoucherExtensionColumns(db)
         ensureBusinessProfileExtensionColumns(db)
         ensureFinancialYearColumnsAndIndexes(db)
+    }
+}
+
+val MIGRATION_9_10 = object : Migration(9, 10) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        ensureVoucherExtensionColumns(db)
+        ensureBusinessProfileExtensionColumns(db)
+        ensurePartyExtensionColumns(db)
+        ensureFinancialYearColumnsAndIndexes(db)
+        ensureReminderScheduleTable(db)
     }
 }
