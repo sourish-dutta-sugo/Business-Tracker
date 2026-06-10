@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.sp
 import com.example.data.*
 import com.example.ui.AppViewModel
 import com.example.ui.theme.*
+import kotlinx.coroutines.delay
 import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -506,8 +507,30 @@ fun AddPartyForm(
 
     var dropdownExpanded by remember { mutableStateOf(false) }
     var showError by remember { mutableStateOf(false) }
+    var pinLookupMessage by remember { mutableStateOf("") }
+    var pinLookupSuccess by remember { mutableStateOf(false) }
 
     val scrollState = rememberScrollState()
+
+    LaunchedEffect(pin) {
+        if (pin.length == 6 && pin.all(Char::isDigit)) {
+            delay(300)
+            val result = fetchPinLookup(pin)
+            if (result != null) {
+                city = result.city
+                selectedStateInfo = Utils.INDIAN_STATES.firstOrNull { it.first.equals(result.state, ignoreCase = true) }
+                    ?: (result.state to result.stateCode.ifBlank { selectedStateInfo.second })
+                pinLookupMessage = "Auto-filled city and state from PIN"
+                pinLookupSuccess = true
+            } else {
+                pinLookupMessage = "PIN lookup failed. You can enter city and state manually."
+                pinLookupSuccess = false
+            }
+        } else {
+            pinLookupMessage = ""
+            pinLookupSuccess = false
+        }
+    }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -600,6 +623,13 @@ fun AddPartyForm(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 shape = RoundedCornerShape(8.dp)
             )
+            if (pinLookupMessage.isNotBlank()) {
+                Text(
+                    text = pinLookupMessage,
+                    color = if (pinLookupSuccess) Color(0xFF2E7D32) else Color(0xFF8A8A8A),
+                    fontSize = 11.sp
+                )
+            }
 
             OutlinedTextField(
                 value = city,
@@ -810,6 +840,28 @@ fun EditPartyForm(
     var notes by remember(party.id) { mutableStateOf(party.notes) }
     var dropdownExpanded by remember { mutableStateOf(false) }
     var showError by remember { mutableStateOf(false) }
+    var pinLookupMessage by remember(party.id) { mutableStateOf("") }
+    var pinLookupSuccess by remember(party.id) { mutableStateOf(false) }
+
+    LaunchedEffect(pin) {
+        if (pin.length == 6 && pin.all(Char::isDigit)) {
+            delay(300)
+            val result = fetchPinLookup(pin)
+            if (result != null) {
+                city = result.city
+                selectedStateInfo = Utils.INDIAN_STATES.firstOrNull { it.first.equals(result.state, ignoreCase = true) }
+                    ?: (result.state to result.stateCode.ifBlank { selectedStateInfo.second })
+                pinLookupMessage = "Auto-filled city and state from PIN"
+                pinLookupSuccess = true
+            } else {
+                pinLookupMessage = "PIN lookup failed. You can enter city and state manually."
+                pinLookupSuccess = false
+            }
+        } else {
+            pinLookupMessage = ""
+            pinLookupSuccess = false
+        }
+    }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -844,6 +896,13 @@ fun EditPartyForm(
             OutlinedTextField(value = email, onValueChange = { email = it }, label = { Text("Email Address") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp))
             OutlinedTextField(value = address, onValueChange = { address = it }, label = { Text("Address") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp))
             OutlinedTextField(value = pin, onValueChange = { pin = it.filter(Char::isDigit).take(6) }, label = { Text("PIN Code") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp))
+            if (pinLookupMessage.isNotBlank()) {
+                Text(
+                    text = pinLookupMessage,
+                    color = if (pinLookupSuccess) Color(0xFF2E7D32) else Color(0xFF8A8A8A),
+                    fontSize = 11.sp
+                )
+            }
             OutlinedTextField(value = city, onValueChange = { city = it }, label = { Text("City") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp))
             Box(modifier = Modifier.fillMaxWidth()) {
                 OutlinedTextField(value = "${selectedStateInfo.first} (${selectedStateInfo.second})", onValueChange = {}, readOnly = true, label = { Text("State") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp), trailingIcon = {

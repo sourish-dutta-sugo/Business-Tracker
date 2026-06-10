@@ -527,6 +527,7 @@ class DueReminderWorker(
 ) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         val voucherId = inputData.getString("voucher_id").orEmpty()
+        val fallbackEmail = inputData.getString("party_email").orEmpty()
         val isWarning = inputData.getBoolean("is_warning", false)
         if (voucherId.isBlank()) return Result.success()
 
@@ -543,7 +544,7 @@ class DueReminderWorker(
             )
             val business = bundle.document.business
             val partyName = bundle.document.buyer?.name ?: "Customer"
-            val partyEmail = bundle.document.buyer?.email.orEmpty()
+            val partyEmail = bundle.document.buyer?.email.orEmpty().ifBlank { fallbackEmail }
             if (partyEmail.isBlank()) {
                 ensureDueReminderChannel(applicationContext)
                 NotificationManagerCompat.from(applicationContext).notify(
@@ -563,7 +564,7 @@ class DueReminderWorker(
             val body = """
                 Dear $partyName,
 
-                This is a reminder that the following payment ${if (isWarning) "is due soon" else "is due"}:
+                ${if (isWarning) "This is a friendly reminder that the following invoice will become due soon." else "This is a payment reminder for the following unpaid invoice."}
 
                 Invoice No: ${bundle.document.invoiceNumber}
                 Invoice Date: ${bundle.document.issuedAtLabel}
@@ -572,9 +573,11 @@ class DueReminderWorker(
                 Balance Due: \u20B9${currency.format(balanceDue)}
                 Due Date: ${bundle.document.dueDateLabel.ifBlank { "Not specified" }}
 
-                Please arrange payment at the earliest.
+                A PDF copy of the invoice is attached for your reference.
 
-                For queries contact us at ${business.phone}.
+                ${if (isWarning) "Please keep the payment ready before the due date." else "Please arrange payment at the earliest."}
+
+                For any queries, please contact us at ${business.phone}${business.email.takeIf { it.isNotBlank() }?.let { " or $it" } ?: ""}.
 
                 Regards,
                 ${business.businessName}

@@ -9,6 +9,8 @@ import android.os.Looper
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -70,7 +72,6 @@ import androidx.core.content.FileProvider
 import com.example.services.ExportStorageManager
 import com.example.services.InvoiceGenerator
 import com.example.services.configureInvoiceWebView
-import com.example.services.exportInvoicePdf
 import com.example.services.printInvoice
 import com.example.services.shareInvoicePdf
 import com.example.services.shareInvoicePdfToWhatsApp
@@ -93,8 +94,34 @@ fun InvoiceScreen(
     var isWorking by remember { mutableStateOf(false) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var lastGeneratedPdf by remember { mutableStateOf<java.io.File?>(null) }
-    var lastExportResult by remember { mutableStateOf<ExportStorageManager.ExportResult?>(null) }
+    var pendingSaveAsFile by remember { mutableStateOf<java.io.File?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
+    val savePdfLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/pdf")
+    ) { uri ->
+        val sourceFile = pendingSaveAsFile
+        pendingSaveAsFile = null
+        if (uri == null || sourceFile == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            runCatching {
+                ExportStorageManager.writeFileToUri(context, sourceFile, uri)
+                val action = snackbarHostState.showSnackbar(
+                    message = "Invoice saved successfully",
+                    actionLabel = "Open"
+                )
+                if (action == androidx.compose.material3.SnackbarResult.ActionPerformed) {
+                    context.startActivity(
+                        Intent(Intent.ACTION_VIEW).apply {
+                            setDataAndType(uri, "application/pdf")
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                    )
+                }
+            }.onFailure {
+                Toast.makeText(context, it.message ?: "Failed to save invoice", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
 
     fun refreshBundle() {
         scope.launch {
@@ -253,20 +280,13 @@ fun InvoiceScreen(
                         )
                         InvoiceActionButton(
                             icon = Icons.Outlined.Download,
-                            label = "Download",
+                            label = "Save As",
                             tint = Color(0xFF1A73E8),
                             enabled = !isWorking,
                             onClick = {
                                 runPdfAction { _, pdfFile ->
-                                    lastExportResult = exportInvoicePdf(context, pdfFile)
-                                    val exportResult = lastExportResult ?: return@runPdfAction
-                                    val action = snackbarHostState.showSnackbar(
-                                        message = "Invoice saved to Downloads: ${exportResult.fileName}",
-                                        actionLabel = "Open"
-                                    )
-                                    if (action == androidx.compose.material3.SnackbarResult.ActionPerformed) {
-                                        ExportStorageManager.openFile(context, exportResult)
-                                    }
+                                    pendingSaveAsFile = pdfFile
+                                    savePdfLauncher.launch(bundle.exportFileName)
                                 }
                             }
                         )

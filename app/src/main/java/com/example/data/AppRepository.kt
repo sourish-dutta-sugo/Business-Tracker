@@ -134,8 +134,12 @@ class AppRepository(private val db: AppDatabase) {
     suspend fun getVoucherSaveExtras(voucherId: String): VoucherSaveExtras {
         val cursor = db.openHelper.readableDatabase.query(
             """
-            SELECT partial_amount_paid, partial_payment_submode, credit_due_date,
-                   remaining_credit_amount, is_advance, advance_for
+            SELECT COALESCE(partial_amount_paid, 0),
+                   COALESCE(partial_payment_submode, ''),
+                   COALESCE(credit_due_date, ''),
+                   COALESCE(remaining_credit_amount, 0),
+                   COALESCE(is_advance, 0),
+                   COALESCE(advance_for, '')
             FROM vouchers WHERE id = ?
             """.trimIndent(),
             arrayOf(voucherId)
@@ -972,9 +976,16 @@ class AppRepository(private val db: AppDatabase) {
         for (bill in bills) {
             val billAllocations = db.receiptAllocationDao().getAllocationsForInvoiceSync(bill.voucherId)
             val totalAllocated = billAllocations.sumOf { it.allocatedAmount }
-            val outstanding = maxOf(0.0, bill.originalAmount - totalAllocated)
+            val sourceVoucher = db.voucherDao().getVoucherById(bill.voucherId)
+            val initialPartPayment = if (sourceVoucher?.type == "SALE" && sourceVoucher.paymentMode == "PART PAYMENT") {
+                getVoucherSaveExtras(bill.voucherId).partialAmountPaid.coerceAtLeast(0.0)
+            } else {
+                0.0
+            }
+            val totalPaid = (initialPartPayment + totalAllocated).coerceAtMost(bill.originalAmount)
+            val outstanding = maxOf(0.0, bill.originalAmount - totalPaid)
             
-            val status = if (outstanding <= 0.0) "PAID" else if (totalAllocated > 0.0) "PARTIAL" else {
+            val status = if (outstanding <= 0.0) "PAID" else if (totalPaid > 0.0) "PARTIAL" else {
                 if (bill.dueDate != null && System.currentTimeMillis() > bill.dueDate) "OVERDUE" else "UNPAID"
             }
             
@@ -985,7 +996,7 @@ class AppRepository(private val db: AppDatabase) {
             }
             
             val updatedBill = bill.copy(
-                paidAmount = totalAllocated,
+                paidAmount = totalPaid,
                 outstandingAmount = outstanding,
                 status = status,
                 daysOverdue = daysOverdue
@@ -995,7 +1006,9 @@ class AppRepository(private val db: AppDatabase) {
             // Sync with Voucher
             val v = db.voucherDao().getVoucherById(bill.voucherId)
             if (v != null) {
+                val voucherExtras = getVoucherSaveExtras(v.id)
                 db.voucherDao().insertVoucher(v.copy(outstandingAmount = outstanding))
+                saveVoucherExtras(v.id, v.paymentMode, voucherExtras)
                 db.openHelper.writableDatabase.execSQL(
                     "UPDATE vouchers SET remaining_credit_amount = ? WHERE id = ?",
                     arrayOf(outstanding, bill.voucherId)
@@ -1019,7 +1032,9 @@ class AppRepository(private val db: AppDatabase) {
             val allocatedAmount = allocations.sumOf { it.allocatedAmount }
             val outstanding = maxOf(0.0, purchaseVoucher.netAmount - allocatedAmount)
             if (purchaseVoucher.outstandingAmount != outstanding) {
+                val voucherExtras = getVoucherSaveExtras(purchaseVoucher.id)
                 db.voucherDao().insertVoucher(purchaseVoucher.copy(outstandingAmount = outstanding))
+                saveVoucherExtras(purchaseVoucher.id, purchaseVoucher.paymentMode, voucherExtras)
             }
         }
     }
@@ -1047,7 +1062,9 @@ class AppRepository(private val db: AppDatabase) {
                 credit_due_date = ?,
                 remaining_credit_amount = ?,
                 is_advance = ?,
-                advance_for = ?
+                advance_for = ?,
+                reference_no = ?,
+                other_references = ?
             WHERE id = ?
             """.trimIndent(),
             arrayOf(
@@ -1058,6 +1075,8 @@ class AppRepository(private val db: AppDatabase) {
                 extras.remainingCreditAmount,
                 if (extras.isAdvance) 1 else 0,
                 extras.advanceFor,
+                extras.referenceNo,
+                extras.otherReferences,
                 voucherId
             )
         )

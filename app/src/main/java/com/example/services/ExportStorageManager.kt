@@ -10,6 +10,7 @@ import android.provider.MediaStore
 import androidx.core.content.FileProvider
 import java.io.File
 import java.io.FileInputStream
+import java.io.FileOutputStream
 
 enum class ExportTarget(val relativeDir: String) {
     Invoices("${Environment.DIRECTORY_DOWNLOADS}/ZeroBook/Invoices"),
@@ -75,6 +76,24 @@ object ExportStorageManager {
         target: ExportTarget
     ): ExportResult = FileInputStream(sourceFile).use {
         exportBytes(context, it.readBytes(), displayName, mimeType, target)
+    }
+
+    fun writeFileToUri(
+        context: Context,
+        sourceFile: File,
+        destinationUri: Uri
+    ) {
+        val descriptor = context.contentResolver.openFileDescriptor(destinationUri, "w")
+            ?: error("Unable to open destination for export.")
+        descriptor.use { parcel ->
+            FileInputStream(sourceFile).use { input ->
+                FileOutputStream(parcel.fileDescriptor).use { output ->
+                    input.copyTo(output)
+                    output.flush()
+                    output.fd.sync()
+                }
+            }
+        }
     }
 
     fun openFile(context: Context, exportResult: ExportResult) {

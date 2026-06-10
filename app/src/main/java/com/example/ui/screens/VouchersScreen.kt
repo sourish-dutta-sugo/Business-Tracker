@@ -825,6 +825,38 @@ fun NewVoucherScreen(
     var showPrintReceiptDialog by remember { mutableStateOf(false) }
     var printedVoucherId by remember { mutableStateOf<String?>(null) }
     var isSavingAndPrinting by remember { mutableStateOf(false) }
+    var pendingSaveAsPdfFile by remember { mutableStateOf<File?>(null) }
+    var navigateBackAfterPdfSave by remember { mutableStateOf(false) }
+    val saveInvoicePdfLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/pdf")
+    ) { uri ->
+        val sourceFile = pendingSaveAsPdfFile
+        pendingSaveAsPdfFile = null
+        if (uri == null || sourceFile == null) {
+            navigateBackAfterPdfSave = false
+            return@rememberLauncherForActivityResult
+        }
+        coroutineScope.launch {
+            runCatching {
+                com.example.services.ExportStorageManager.writeFileToUri(context, sourceFile, uri)
+                android.widget.Toast.makeText(
+                    context,
+                    "Invoice saved successfully",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }.onFailure {
+                android.widget.Toast.makeText(
+                    context,
+                    it.message ?: "Failed to save PDF",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
+            if (navigateBackAfterPdfSave) {
+                navigateBackAfterPdfSave = false
+                onNavigateBack()
+            }
+        }
+    }
 
     // Populate dynamic number on type/date change
     LaunchedEffect(selectedType, voucherDate) {
@@ -2391,7 +2423,7 @@ fun NewVoucherScreen(
                             }
 
                             additionalCharges.forEachIndexed { index, charge ->
-                                key("${charge.label}-${charge.amount}-$index") {
+                                key("charge-row-$index") {
                                 val isOtherCharge = charge.label.isBlank() || chargeTypes.none { it == charge.label }
                                 val isTransportCharge = isTransportChargeType(charge.label)
                                 var chargeTypeExpanded by remember(index, charge.label) { mutableStateOf(false) }
@@ -2759,6 +2791,14 @@ fun NewVoucherScreen(
                         voucherNo = voucherNo,
                         voucherDate = voucherDate,
                         paymentMode = paymentMode,
+                        creditDueDate = creditDueDateText,
+                        partialAmountPaid = partialAmountPaidText.toDoubleOrNull() ?: 0.0,
+                        partialPaymentSubmode = partialPaymentSubmode,
+                        remainingCreditAmount = when {
+                            selectedType == "SALE" && paymentMode == "PART PAYMENT" -> (netAmount.value - (partialAmountPaidText.toDoubleOrNull() ?: 0.0)).coerceAtLeast(0.0)
+                            selectedType == "SALE" && paymentMode == "CREDIT" -> netAmount.value
+                            else -> 0.0
+                        },
                         lineItems = lineItems,
                         additionalCharges = additionalCharges.toList(),
                         taxableAmount = taxableAmount.value,
@@ -3104,27 +3144,24 @@ fun NewVoucherScreen(
                                     val bundle = viewModel.getInvoiceRenderBundle(savedVoucherId)
                                         ?: error("Failed to load latest invoice data")
                                     val pdfFile = InvoiceGenerator.renderBundleToPdf(context, bundle)
-                                    val result = com.example.services.exportInvoicePdf(context, pdfFile)
-                                    android.widget.Toast.makeText(
-                                        context,
-                                        "Saved ${result.fileName} to ${result.locationLabel}",
-                                        android.widget.Toast.LENGTH_LONG
-                                    ).show()
+                                    pendingSaveAsPdfFile = pdfFile
+                                    navigateBackAfterPdfSave = true
+                                    saveInvoicePdfLauncher.launch(bundle.exportFileName)
                                 }.onFailure {
                                     android.widget.Toast.makeText(
                                         context,
                                         it.message ?: "Failed to save PDF",
                                         android.widget.Toast.LENGTH_LONG
                                     ).show()
+                                    navigateBackAfterPdfSave = false
                                 }
-                                onNavigateBack()
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = AppColors.primary)
                     ) {
                         Icon(imageVector = Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Download PDF to Files", color = Color.White)
+                        Text("Save PDF As", color = Color.White)
                     }
                     Button(
                         onClick = {
@@ -3702,6 +3739,10 @@ fun LiveInvoicePreview(
     voucherNo: String,
     voucherDate: Long,
     paymentMode: String,
+    creditDueDate: String,
+    partialAmountPaid: Double,
+    partialPaymentSubmode: String,
+    remainingCreditAmount: Double,
     lineItems: List<com.example.data.VoucherItem>,
     additionalCharges: List<com.example.data.AdditionalCharge>,
     taxableAmount: Double,
@@ -3775,7 +3816,13 @@ fun LiveInvoicePreview(
             items = lineItems,
             business = previewBusiness,
             party = party,
-            additionalCharges = additionalCharges
+            additionalCharges = additionalCharges,
+            renderExtras = InvoiceGenerator.VoucherRenderExtras(
+                partialAmountPaid = partialAmountPaid,
+                partialPaymentSubmode = partialPaymentSubmode,
+                creditDueDate = creditDueDate,
+                remainingCreditAmount = remainingCreditAmount
+            )
         )
     }
     Card(

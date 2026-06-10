@@ -223,7 +223,7 @@ object InvoiceGenerator {
         business: BusinessProfile,
         party: Party?,
         additionalCharges: List<AdditionalCharge> = emptyList(),
-        qrBase64: String? = null
+        renderExtras: VoucherRenderExtras = VoucherRenderExtras()
     ): String {
         val totals = InvoiceTotals(
             totalQuantity = items.sumOf { it.qty },
@@ -236,16 +236,28 @@ object InvoiceGenerator {
             totalTaxAmount = voucher.cgst + voucher.sgst + voucher.igst
         )
         val paymentSnapshot = InvoicePaymentSnapshot(
-            modeLabel = voucher.paymentMode,
+            modeLabel = resolvePaymentLabel(voucher, renderExtras),
             previousDue = 0.0,
             currentInvoiceAmount = voucher.netAmount,
-            advanceReceived = 0.0,
-            partPaymentReceived = 0.0,
-            partPaymentSubmode = "",
-            balanceDue = voucher.outstandingAmount,
-            outstandingAmount = voucher.outstandingAmount,
-            dueDateLabel = "",
-            summaryLabel = voucher.paymentMode
+            advanceReceived = if (renderExtras.isAdvance) voucher.netAmount else 0.0,
+            partPaymentReceived = renderExtras.partialAmountPaid.coerceAtLeast(0.0),
+            partPaymentSubmode = renderExtras.partialPaymentSubmode,
+            balanceDue = when (voucher.paymentMode.normalizedPaymentMode()) {
+                "PART PAYMENT" -> renderExtras.remainingCreditAmount.coerceAtLeast(0.0)
+                "CREDIT" -> voucher.outstandingAmount.takeIf { it > 0.0 } ?: voucher.netAmount
+                else -> voucher.outstandingAmount.coerceAtLeast(0.0)
+            },
+            outstandingAmount = when (voucher.paymentMode.normalizedPaymentMode()) {
+                "PART PAYMENT" -> renderExtras.remainingCreditAmount.coerceAtLeast(0.0)
+                "CREDIT" -> voucher.outstandingAmount.takeIf { it > 0.0 } ?: voucher.netAmount
+                else -> voucher.outstandingAmount.coerceAtLeast(0.0)
+            },
+            dueDateLabel = if (
+                voucher.type == "SALE" &&
+                voucher.paymentMode.normalizedPaymentMode() in setOf("CREDIT", "PART PAYMENT") &&
+                renderExtras.creditDueDate.isNotBlank()
+            ) formatDueDateText(renderExtras.creditDueDate) else "",
+            summaryLabel = buildPaymentSummaryLabel(voucher, renderExtras)
         )
         val document = InvoiceDocument(
             voucherId = voucher.id,
@@ -262,8 +274,8 @@ object InvoiceGenerator {
             paymentSnapshot = paymentSnapshot,
             totals = totals,
             taxSummary = buildTaxSummary(items, voucher),
-            referenceNo = voucher.referenceNo,
-            otherReferences = voucher.dispatchDocNo,
+            referenceNo = renderExtras.referenceNo.ifBlank { voucher.referenceNo },
+            otherReferences = renderExtras.otherReferences.ifBlank { voucher.dispatchDocNo },
             amountInWords = amountInWords(voucher.netAmount),
             taxAmountInWords = amountInWords(totals.totalTaxAmount)
         )
@@ -354,9 +366,6 @@ object InvoiceGenerator {
         }
     }
 
-    fun buildUpiDeepLink(upiId: String, businessName: String, amount: Double, voucherNo: String): String =
-        generateUpiLink(upiId, businessName, amount, voucherNo)
-
     fun generateUpiLink(
         upiId: String,
         businessName: String,
@@ -367,19 +376,6 @@ object InvoiceGenerator {
         val encodedNote = java.net.URLEncoder.encode("Invoice $invoiceNo", "UTF-8")
         return "upi://pay?pa=$upiId&pn=$encodedName&am=${"%.2f".format(Locale.ENGLISH, amount)}&cu=INR&tn=$encodedNote"
     }
-
-    fun getQrHtml(upiLink: String, upiId: String): String {
-        return if (upiId.isBlank()) "" else {
-            """
-            <div style='display:flex;align-items:center;justify-content:center;width:96px;height:96px;border:1px dashed #777;color:#444;font-size:9px;text-align:center;'>
-              QR
-            </div>
-            <div style='font-size:9px;color:#444;margin-top:4px;'>${escapeHtml(upiId)}</div>
-            """.trimIndent()
-        }
-    }
-
-    fun generateQrBase64(value: String, size: Int = 200): String? = null
 
     private fun buildInvoiceDocument(source: InvoiceDocumentData): InvoiceDocument {
         val taxSummary = buildTaxSummary(source.items, source.voucher)
@@ -393,9 +389,26 @@ object InvoiceGenerator {
             netAmount = source.voucher.netAmount,
             totalTaxAmount = source.voucher.cgst + source.voucher.sgst + source.voucher.igst
         )
-        val dueDateLabel = source.extras.creditDueDate.takeIf { it.isNotBlank() }?.let(::formatDueDateText).orEmpty()
+        val normalizedPaymentMode = source.voucher.paymentMode.normalizedPaymentMode()
+        val dueDateLabel = if (
+            source.voucher.type == "SALE" &&
+            normalizedPaymentMode in setOf("CREDIT", "PART PAYMENT") &&
+            source.extras.creditDueDate.isNotBlank()
+        ) {
+            formatDueDateText(source.extras.creditDueDate)
+        } else {
+            ""
+        }
         val partPaymentReceived = source.extras.partialAmountPaid.coerceAtLeast(0.0)
         val advanceReceived = if (source.extras.isAdvance) source.voucher.netAmount else 0.0
+        val balanceDue = when {
+            normalizedPaymentMode == "PART PAYMENT" -> source.extras.remainingCreditAmount.coerceAtLeast(0.0)
+            normalizedPaymentMode == "CREDIT" -> source.voucher.outstandingAmount
+                .takeIf { it > 0.0 }
+                ?.coerceAtLeast(0.0)
+                ?: source.voucher.netAmount.coerceAtLeast(0.0)
+            else -> source.voucher.outstandingAmount.coerceAtLeast(0.0)
+        }
         val paymentSnapshot = InvoicePaymentSnapshot(
             modeLabel = resolvePaymentLabel(source.voucher, source.extras),
             previousDue = 0.0,
@@ -403,8 +416,8 @@ object InvoiceGenerator {
             advanceReceived = advanceReceived,
             partPaymentReceived = partPaymentReceived,
             partPaymentSubmode = source.extras.partialPaymentSubmode,
-            balanceDue = source.extras.remainingCreditAmount.coerceAtLeast(source.voucher.outstandingAmount).coerceAtLeast(0.0),
-            outstandingAmount = source.voucher.outstandingAmount.coerceAtLeast(0.0),
+            balanceDue = balanceDue,
+            outstandingAmount = balanceDue,
             dueDateLabel = dueDateLabel,
             summaryLabel = buildPaymentSummaryLabel(source.voucher, source.extras)
         )
@@ -432,8 +445,8 @@ object InvoiceGenerator {
             paymentSnapshot = paymentSnapshot,
             totals = totals,
             taxSummary = taxSummary,
-            referenceNo = source.extras.referenceNo.ifBlank { source.voucher.referenceNo },
-            otherReferences = source.extras.otherReferences,
+            referenceNo = source.extras.referenceNo.trim(),
+            otherReferences = source.extras.otherReferences.trim(),
             amountInWords = amountInWords(source.voucher.netAmount),
             taxAmountInWords = amountInWords(totals.totalTaxAmount)
         )
@@ -462,51 +475,31 @@ object InvoiceGenerator {
         val buyer = document.buyer
         val voucher = document.voucher
         val totals = document.totals
-        val showLogo = business.showLogo && !business.logoPath.isNullOrBlank() && File(business.logoPath!!).exists()
         val showSignature = business.showSignature && !business.signaturePath.isNullOrBlank() && File(business.signaturePath!!).exists()
         val isIntrastate = !voucher.isIgst && buyer?.stateCode == business.stateCode
-        val heading = when {
-            voucher.documentType.contains("PROFORMA", ignoreCase = true) -> "PROFORMA INVOICE"
-            business.gstin.isNotBlank() -> "TAX INVOICE"
-            else -> "INVOICE"
+        val showLogo = business.showLogo && !business.logoPath.isNullOrBlank() && File(business.logoPath!!).exists()
+        val dueDateValue = document.dueDateLabel.ifBlank { "-" }
+        val referenceValue = document.referenceNo.ifBlank { "-" }
+        val otherReferencesValue = document.otherReferences.ifBlank { "-" }
+        val heading = if (voucher.documentType.contains("PROFORMA", ignoreCase = true)) "PROFORMA INVOICE" else "TAX INVOICE"
+        val signatureHtml = if (showSignature) {
+            "<img src='${toFileUrl(business.signaturePath!!)}' style='max-height:62px;max-width:180px;object-fit:contain;display:block;margin-left:auto;'/>"
+        } else {
+            "<div style='height:62px;'></div>"
         }
-        val modeTermsHtml = buildModeTermsHtml(document)
-        val dueDateValue = document.dueDateLabel
-        val referenceValue = document.referenceNo
-        val otherReferencesValue = document.otherReferences
-        val sellerDetailsHtml = buildString {
-            if (business.address.isNotBlank()) append("<div>${escapeHtml(business.address).replace("\n", "<br/>")}</div>")
-            if (business.phone.isNotBlank()) append("<div>Ph : ${escapeHtml(business.phone)}</div>")
-            if (business.gstin.isNotBlank()) append("<div>GSTIN/UIN: ${escapeHtml(business.gstin)}</div>")
-            if (business.state.isNotBlank()) append("<div>State Name : ${escapeHtml(business.state)}, Code : ${escapeHtml(business.stateCode)}</div>")
-            if (business.email.isNotBlank()) append("<div>E-Mail : ${escapeHtml(business.email)}</div>")
-            if (business.pan.isNotBlank()) append("<div>PAN: ${escapeHtml(business.pan)}</div>")
-            if (business.accountNo.isNotBlank()) append("<div>A/c: ${escapeHtml(business.accountNo)}</div>")
-        }
-        val buyerDetailsHtml = buildString {
-            append("<div class='sublabel'>Buyer (Bill to)</div>")
-            append("<div style='font-weight:bold;font-size:12px;'>${escapeHtml(buyer?.name ?: "Cash / Walk-in Customer")}</div>")
-            if (!buyer?.address.isNullOrBlank()) append("<div>${escapeHtml(buyer!!.address).replace("\n", "<br/>")}</div>")
-            if (!buyer?.city.isNullOrBlank() || !buyer?.pin.isNullOrBlank()) {
-                append("<div>${escapeHtml(buyer?.city.orEmpty())}${if (!buyer?.pin.isNullOrBlank()) " - ${escapeHtml(buyer!!.pin)}" else ""}</div>")
-            }
-            if (!buyer?.pan.isNullOrBlank()) append("<div>PAN: ${escapeHtml(buyer!!.pan!!)}</div>")
-            if (!buyer?.gstin.isNullOrBlank()) append("<div>GSTIN: ${escapeHtml(buyer!!.gstin!!)}</div>")
-            if (!buyer?.state.isNullOrBlank()) append("<div>State Name : ${escapeHtml(buyer!!.state)}, Code : ${escapeHtml(buyer.stateCode)}</div>")
-            if (!buyer?.state.isNullOrBlank()) append("<div>Place of Supply   : ${escapeHtml(buyer!!.state)}</div>")
-        }
-        val transportRowsHtml = buildTransportRowsHtml(voucher)
+        val sellerDetailsHtml = buildSellerBlock(business, showLogo)
+        val buyerDetailsHtml = buildBuyerBlock(buyer, business)
+        val transportDetailsHtml = buildTransportDeliveryPaymentHtml(voucher, document, business)
         val itemRows = document.items.mapIndexed { index, item ->
-            val bg = if (index % 2 == 0) "#ffffff" else "#fafafa"
             """
-            <tr style='background:$bg;'>
-              <td class='c'>${index + 1}</td>
-              <td><span class='b'>${escapeHtml(item.productName)}</span></td>
-              <td class='c'>${escapeHtml(item.hsnCode)}</td>
-              <td class='c'>${formatQty(item.qty)}</td>
-              <td class='r'>${formatMoney(item.rate)}</td>
-              <td class='c'>${escapeHtml(item.unit)}</td>
-              <td class='r'>${formatMoney(item.taxableAmount)}</td>
+            <tr>
+              <td class='center num'>${index + 1}</td>
+              <td>${escapeHtml(item.productName)}</td>
+              <td class='center num'>${escapeHtml(item.hsnCode)}</td>
+              <td class='right num'>${formatQty(item.qty)}</td>
+              <td class='center'>${escapeHtml(item.unit)}</td>
+              <td class='right num'>${formatMoney(item.rate)}</td>
+              <td class='right num'>${formatMoney(item.taxableAmount)}</td>
             </tr>
             """.trimIndent()
         }.joinToString("\n")
@@ -514,24 +507,17 @@ object InvoiceGenerator {
             """
             <tr>
               <td></td>
-              <td colspan='5' class='r' style='font-style:italic;font-weight:bold;'>${escapeHtml(charge.label.ifBlank { "Additional Charge" })}</td>
-              <td class='r'>${formatMoney(charge.amount)}</td>
+              <td colspan='5' class='right bold'>${escapeHtml(charge.label.ifBlank { "Additional Charge" })}</td>
+              <td class='right num'>${formatMoney(charge.amount)}</td>
             </tr>
             """.trimIndent()
         }
         val gstRows = buildItemGstRows(document, isIntrastate)
-        val totalUnit = document.items.firstOrNull()?.unit.orEmpty()
-        val spacerRows = (1..8).joinToString("") {
-            "<tr class='spacer'><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>"
+        val usedRows = document.items.size + document.additionalCharges.size + listOf(document.voucher.cgst, document.voucher.sgst, document.voucher.igst).count { it > 0.0 }
+        val spacerRows = (1..maxOf(0, 4 - usedRows)).joinToString("") {
+            "<tr class='blank-row'><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>"
         }
-        val paymentSummaryHtml = buildPaymentSummaryHtml(document)
-        val gstBreakupHtml = buildGstBreakupHtml(document, business.gstin.isNotBlank(), isIntrastate)
-        val signatureHtml = if (showSignature) {
-            "<img src='${toFileUrl(business.signaturePath!!)}' style='max-height:55px;max-width:160px;object-fit:contain;display:block;margin-left:auto;'/>"
-        } else {
-            "<div style='height:55px;'></div>"
-        }
-        val termsHtml = escapeHtml(business.termsAndConditions.ifBlank { DEFAULT_TERMS_AND_CONDITIONS }).replace("\n", "<br/>")
+        val declarationHtml = buildDeclarationHtml(business.termsAndConditions.ifBlank { DEFAULT_TERMS_AND_CONDITIONS })
 
         return """
         <!DOCTYPE html>
@@ -541,296 +527,247 @@ object InvoiceGenerator {
           <meta name='viewport' content='width=device-width, initial-scale=1.0'/>
           <style>
             * { margin:0; padding:0; box-sizing:border-box; }
-            body { font-family:Arial,Helvetica,sans-serif; font-size:11px; color:#000000; background:#ffffff; }
-            .page { width:100%; padding:18px 22px; background:#ffffff; }
+            body { font-family:Arial,Helvetica,sans-serif; font-size:11px; color:#111111; background:#ffffff; min-width:920px; }
+            .page { width:920px; margin:0 auto; padding:14px 18px 18px 18px; background:#ffffff; }
             table { width:100%; border-collapse:collapse; table-layout:fixed; }
-            td, th { border:1px solid #000000; padding:3px 5px; vertical-align:top; }
-            .nb td, .nb th { border:none; }
-            .b { font-weight:bold; }
-            .c { text-align:center; }
-            .r { text-align:right; }
-            .heading { font-size:14px; font-weight:bold; text-align:center; letter-spacing:2px; padding:5px 0 8px 0; }
-            .sublabel { font-size:9px; color:#555555; }
-            .aw { font-weight:bold; font-size:11px; padding:5px 6px; }
-            .thdr { background:#f0f0f0; font-weight:bold; font-size:10px; }
-            .gthdr { background:#e8e8e8; font-weight:bold; font-size:10px; text-align:center; }
-            .tot { font-weight:bold; background:#f5f5f5; }
-            .spacer td { border-top:none; border-bottom:none; height:20px; }
-            .psummary td { font-size:10px; }
-            .wrap { word-wrap:break-word; overflow-wrap:break-word; white-space:normal; max-width:0; }
-            .terms { word-wrap:break-word; overflow-wrap:break-word; white-space:normal; line-height:1.45; }
-            @media print {
-              body { -webkit-print-color-adjust:exact; }
-            }
+            td, th { border:1px solid #1d2430; padding:5px 6px; vertical-align:top; overflow-wrap:anywhere; word-break:break-word; }
+            .title { text-align:center; font-size:15px; font-weight:700; letter-spacing:0.5px; padding:4px 0 12px 0; }
+            .center { text-align:center; }
+            .right { text-align:right; }
+            .bold { font-weight:700; }
+            .num { white-space:nowrap; overflow-wrap:normal; word-break:normal; font-size:9.4px; }
+            .small-label { font-size:9px; color:#666666; margin-bottom:4px; }
+            .meta-value { font-size:11px; font-weight:700; margin-top:2px; }
+            .company-name { font-size:15px; font-weight:700; margin-bottom:6px; }
+            .buyer-name { font-size:12px; font-weight:700; margin-bottom:3px; }
+            .section-body { line-height:1.45; font-size:11px; }
+            .seller-head { font-size:9px; color:#666666; margin-bottom:6px; }
+            .seller-grid { width:100%; border-collapse:collapse; table-layout:fixed; }
+            .seller-grid td { border:none; padding:0; vertical-align:top; }
+            .seller-logo { width:86px; padding-right:8px; }
+            .seller-logo img { max-width:80px; max-height:80px; object-fit:contain; display:block; }
+            .items-header th { background:#eef2fa; font-size:9.5px; font-weight:700; text-align:center; }
+            .amount-words .value { display:block; font-size:11px; font-weight:700; margin-top:4px; line-height:1.45; }
+            .snapshot-table td, .gst-table td, .gst-table th { font-size:10px; line-height:1.25; }
+            .snapshot-table .grand { background:#eef2fa; font-weight:700; }
+            .gst-table th { background:#eef2fa; font-size:9.5px; font-weight:700; text-align:center; }
+            .inner-table { width:100%; border-collapse:collapse; table-layout:fixed; }
+            .inner-table td, .inner-table th { border:1px solid #1d2430; padding:5px 6px; vertical-align:top; }
+            .inner-table tr:first-child td, .inner-table tr:first-child th { border-top:none; }
+            .inner-table tr:last-child td, .inner-table tr:last-child th { border-bottom:none; }
+            .inner-table td:first-child, .inner-table th:first-child { border-left:none; }
+            .inner-table td:last-child, .inner-table th:last-child { border-right:none; }
+            .blank-row td { height:30px; }
+            .terms-line { display:block; line-height:1.5; }
+            .signatory { vertical-align:bottom; text-align:right; min-height:120px; }
+            .signatory .for-line { font-size:11px; font-weight:700; margin-bottom:22px; }
+            .summary-wrap { padding:0; }
+            .summary-wrap > table { width:100%; border-collapse:collapse; table-layout:fixed; }
+            @media print { body { -webkit-print-color-adjust:exact; } }
           </style>
         </head>
         <body>
           <div class='page'>
-            <div class='heading'>$heading</div>
+            <div class='title'>$heading</div>
             <table>
               <tr>
-                <td style='width:60%;border-right:2px solid #000000;'>
-                  <table class='nb'>
+                <td style='width:58%;'><div class='section-body'>$sellerDetailsHtml</div></td>
+                <td style='width:42%; padding:0;'>
+                  <table class='inner-table'>
                     <tr>
-                      <td style='width:95px;'>
-                        ${if (showLogo) "<img src='${toFileUrl(business.logoPath!!)}' style='max-height:65px;max-width:120px;object-fit:contain;display:block;'/>" else ""}
-                      </td>
-                      <td>
-                        <div style='font-weight:bold;font-size:14px;'>${escapeHtml(business.businessName)}</div>
-                      </td>
-                    </tr>
-                  </table>
-                  <div style='line-height:1.8;'>$sellerDetailsHtml</div>
-                  <div style='border-top:1px solid #000000;margin:8px 0;'></div>
-                  <div style='line-height:1.7;'>$buyerDetailsHtml</div>
-                </td>
-                <td style='width:40%;padding:0;'>
-                  <table class='nb' style='height:100%;'>
-                    <tr>
-                      <td style='border-bottom:1px solid #cccccc;'>
-                        <div class='sublabel'>Invoice No.</div>
-                        <div class='b'>${escapeHtml(document.invoiceNumber)}</div>
-                      </td>
-                      <td style='border-left:1px solid #cccccc;border-bottom:1px solid #cccccc;padding-left:6px;'>
-                        <div class='sublabel'>Dated</div>
-                        <div class='b'>${escapeHtml(document.issuedAtLabel)}</div>
-                      </td>
-                    </tr>
-                    <tr><td colspan='2' style='border-bottom:1px solid #cccccc;'>$modeTermsHtml</td></tr>
-                    <tr>
-                      <td colspan='2' class='wrap' style='border-bottom:1px solid #cccccc;'>
-                        <div class='sublabel'>Due Date</div>
-                        <div class='b'>${escapeHtml(dueDateValue)}</div>
-                      </td>
+                      <td><div class='small-label'>Invoice No.</div><div class='meta-value'>${escapeHtml(document.invoiceNumber)}</div></td>
+                      <td><div class='small-label'>Dated</div><div class='meta-value'>${escapeHtml(document.issuedAtLabel)}</div></td>
                     </tr>
                     <tr>
-                      <td colspan='2' class='wrap' style='border-bottom:1px solid #cccccc;'>
-                        <div class='sublabel'>Reference No. & Date</div>
-                        <div>${escapeHtml(referenceValue)}</div>
-                        ${if (otherReferencesValue.isNotBlank()) "<div class='sublabel' style='margin-top:4px;'>${escapeHtml(otherReferencesValue)}</div>" else ""}
-                      </td>
+                      <td><div class='small-label'>Mode / Terms of Payment</div><div class='meta-value'>${buildModeTermsValue(document)}</div></td>
+                      <td><div class='small-label'>Due Date</div><div class='meta-value'>${escapeHtml(dueDateValue)}</div></td>
                     </tr>
                     <tr>
-                      <td colspan='2' class='wrap' style='border-bottom:1px solid #cccccc;'>
-                        <div class='sublabel'>Other References</div>
-                        <div>${escapeHtml(otherReferencesValue)}</div>
-                      </td>
+                      <td><div class='small-label'>Reference No. &amp; Date</div><div class='meta-value'>${escapeHtml(referenceValue)}</div></td>
+                      <td><div class='small-label'>Other References</div><div class='meta-value'>${escapeHtml(otherReferencesValue)}</div></td>
                     </tr>
-                    <tr>
-                      <td colspan='2' style='border-bottom:1px solid #cccccc;'>
-                        <div class='sublabel'>Buyer's Order No.</div>
-                        <div>${escapeHtml(voucher.buyerOrderNo)}</div>
-                      </td>
-                    </tr>
-                    <tr>
-                      <td colspan='2' style='border-bottom:${if (transportRowsHtml.isBlank()) "none" else "1px solid #cccccc"};'>
-                        <div class='sublabel'>Terms of Delivery</div>
-                        <div>${escapeHtml(voucher.termsOfDelivery)}</div>
-                      </td>
-                    </tr>
-                    $transportRowsHtml
                   </table>
                 </td>
               </tr>
+              <tr>
+                <td style='width:58%;'><div class='section-body'>$buyerDetailsHtml</div></td>
+                <td style='width:42%;'><div class='section-body'>$transportDetailsHtml</div></td>
+              </tr>
             </table>
-
             <table>
-              <tr class='thdr'>
-                <th style='width:4%;' class='c'>Sl No</th>
-                <th style='width:35%;' class='c'>Description</th>
-                <th style='width:10%;' class='c'>HSN/SAC</th>
-                <th style='width:13%;' class='c'>Quantity</th>
-                <th style='width:9%;' class='r'>Rate</th>
-                <th style='width:6%;' class='c'>per</th>
-                <th style='width:13%;' class='r'>Amount</th>
+              <tr class='items-header'>
+                <th style='width:6%;'>Sl No.</th>
+                <th style='width:40%;'>Description of Goods</th>
+                <th style='width:12%;'>HSN/SAC</th>
+                <th style='width:11%;'>Quantity</th>
+                <th style='width:10%;'>Unit</th>
+                <th style='width:10%;'>Rate</th>
+                <th style='width:11%;'>Taxable Amount</th>
               </tr>
               $itemRows
               $additionalChargeRows
               $gstRows
               $spacerRows
-              <tr class='tot'>
-                <td></td>
-                <td class='b'>Total</td>
-                <td></td>
-                <td class='c b'>${formatQty(totals.totalQuantity)} ${escapeHtml(totalUnit)}</td>
-                <td></td>
-                <td></td>
-                <td class='r b'>${formatMoney(totals.netAmount)}</td>
-              </tr>
             </table>
-
             <table>
               <tr>
-                <td style='width:72%;'>
-                  <div class='sublabel'>Amount Chargeable (in words)</div>
-                  <div class='aw'>${escapeHtml(document.amountInWords)}</div>
+                <td style='width:58%;' class='amount-words'>
+                  <div class='small-label'>Amount Chargeable (in words)</div>
+                  <span class='value'>${escapeHtml(document.amountInWords)}</span>
                 </td>
-                <td style='width:28%;'><div style='text-align:right;font-style:italic;'>E. &amp; O.E</div></td>
+                <td style='width:42%; padding:0;' class='summary-wrap'>${buildChargeSummaryHtml(document)}</td>
               </tr>
             </table>
-
-            $paymentSummaryHtml
-            $gstBreakupHtml
-
+            ${buildGstBreakupHtml(document, business.gstin.isNotBlank(), isIntrastate)}
             <table>
               <tr>
-                <td style='width:55%;' class='terms'>
-                  ${if (business.bankName.isNotBlank()) """
-                  <div class='b'>Company's Bank Details</div>
-                  <div>Bank Name : <span class='b'>${escapeHtml(business.bankName)}</span></div>
-                  <div>A/c No.   : <span class='b'>${escapeHtml(business.accountNo)}</span></div>
-                  <div>IFS Code  : <span class='b'>${escapeHtml(business.ifsc)}</span></div>
-                  <div>Branch    : <span class='b'>${escapeHtml(business.branchName)}</span></div>
-                  """.trimIndent() else ""}
-                  <div style='height:10px;'></div>
-                  <div class='b'>Declaration</div>
-                  <div class='b'>TERMS &amp; CONDITIONS</div>
-                  <div>$termsHtml</div>
+                <td style='width:58%;' class='amount-words'>
+                  <div class='small-label'>Tax Amount (in words)</div>
+                  <span class='value'>${escapeHtml(document.taxAmountInWords)}</span>
                 </td>
-                <td style='width:5px;border:none;'></td>
-                <td style='width:40%;text-align:right;vertical-align:bottom;'>
-                  <div class='b'>for ${escapeHtml(business.businessName)}</div>
+                <td style='width:42%; padding:0;' class='summary-wrap'>${buildBalanceSnapshotHtml(document)}</td>
+              </tr>
+            </table>
+            <table>
+              <tr>
+                <td style='width:58%;'>
+                  <div class='small-label'>Declaration / Terms &amp; Conditions</div>
+                  $declarationHtml
+                </td>
+                <td style='width:42%;' class='signatory'>
+                  <div class='for-line'>for ${escapeHtml(business.businessName)}</div>
                   $signatureHtml
-                  <div style='border-top:1px solid #000000;'></div>
-                  <div style='font-size:9px;'>Authorised Signatory</div>
+                  <div>Authorised Signatory</div>
                 </td>
               </tr>
             </table>
-
-            <div style='text-align:center;color:#666666;font-size:10px;padding-top:8px;'>${escapeHtml(business.city)}</div>
           </div>
         </body>
         </html>
         """.trimIndent()
     }
 
-    private fun buildModeTermsHtml(document: InvoiceDocument): String {
-        val voucher = document.voucher
-        val snapshot = document.paymentSnapshot
-        val dueDateLabel = snapshot.dueDateLabel.ifBlank { "Not specified" }
-        val lines = mutableListOf<String>()
-        when {
-            voucher.paymentMode.equals("CASH", ignoreCase = true) -> lines += "<div class='b'>Cash</div>"
-            voucher.paymentMode.equals("BANK", ignoreCase = true) -> lines += "<div class='b'>Bank Transfer</div>"
-            voucher.paymentMode.equals("UPI", ignoreCase = true) -> lines += "<div class='b'>UPI</div>"
-            voucher.paymentMode.equals("CHEQUE", ignoreCase = true) -> {
-                lines += "<div class='b'>Cheque</div>"
-                val chequeBits = listOfNotNull(
-                    voucher.chequeNo?.takeIf { it.isNotBlank() }?.let { "No: ${escapeHtml(it)}" },
-                    voucher.chequeDate?.takeIf { it > 0L }?.let { "Date: ${escapeHtml(invoiceDateFormat.format(Date(it)))}" }
-                )
-                if (chequeBits.isNotEmpty()) lines += "<div>${chequeBits.joinToString(" | ")}</div>"
-            }
-            voucher.paymentMode.equals("PART_PAYMENT", ignoreCase = true) || voucher.paymentMode.equals("PART PAYMENT", ignoreCase = true) -> {
-                lines += "<div class='b'>Part Payment</div>"
-                lines += "<div>Paid Now: Rs. ${formatMoney(snapshot.partPaymentReceived)}${snapshot.partPaymentSubmode.takeIf { it.isNotBlank() }?.let { " via ${escapeHtml(it)}" } ?: ""}</div>"
-                lines += "<div>Balance Due: Rs. ${formatMoney(snapshot.balanceDue)}</div>"
-                lines += "<div>Due by: ${escapeHtml(dueDateLabel)}</div>"
-            }
-            voucher.paymentMode.equals("CREDIT", ignoreCase = true) -> {
-                lines += "<div class='b'>Credit</div>"
-                lines += "<div>Paid Now: Rs. ${formatMoney(snapshot.partPaymentReceived)}${snapshot.partPaymentSubmode.takeIf { it.isNotBlank() }?.let { " via ${escapeHtml(it)}" } ?: ""}</div>"
-                lines += "<div>Balance Due: Rs. ${formatMoney(snapshot.balanceDue)}</div>"
-                lines += "<div>Due by: ${escapeHtml(dueDateLabel)}</div>"
-            }
-            snapshot.advanceReceived > 0.0 -> {
-                lines += "<div class='b'>Advance Receipt</div>"
-                lines += "<div>Amount: Rs. ${formatMoney(snapshot.advanceReceived)}</div>"
-            }
-            else -> lines += "<div class='b'>${escapeHtml(snapshot.modeLabel)}</div>"
+    private fun buildSellerBlock(business: BusinessProfile, showLogo: Boolean): String {
+        val detailsHtml = buildString {
+            append("<div class='seller-head'>Seller</div>")
+            append("<div class='company-name'>${escapeHtml(business.businessName)}</div>")
+            if (business.address.isNotBlank()) append("<div>${escapeHtml(business.address).replace("\n", "<br/>")}</div>")
+            append("<div>${escapeHtml(listOfNotNull(business.city.takeIf { it.isNotBlank() }, business.pin.takeIf { it.isNotBlank() }).joinToString(" - "))}</div>")
+            if (business.pan.isNotBlank()) append("<div>PAN: ${escapeHtml(business.pan)}</div>")
+            if (business.phone.isNotBlank()) append("<div>Ph: ${escapeHtml(business.phone)}</div>")
+            if (business.gstin.isNotBlank()) append("<div>GSTIN/UIN: ${escapeHtml(business.gstin)}</div>")
+            if (business.state.isNotBlank()) append("<div>State Name: ${escapeHtml(business.state)}, Code: ${escapeHtml(business.stateCode)}</div>")
+            if (business.email.isNotBlank()) append("<div>E-Mail: ${escapeHtml(business.email)}</div>")
         }
-        return "<div class='sublabel'>Mode/Terms of Payment</div>${lines.joinToString("")}"
+        if (!showLogo) return detailsHtml
+        return """
+        <table class='seller-grid'>
+          <tr>
+            <td class='seller-logo'><img src='${toFileUrl(business.logoPath!!)}'/></td>
+            <td>$detailsHtml</td>
+          </tr>
+        </table>
+        """.trimIndent()
     }
 
-    private fun buildTransportRowsHtml(voucher: Voucher): String {
-        val rows = buildList {
-            if (voucher.transporterName.isNotBlank()) add("Transporter" to voucher.transporterName)
-            if (voucher.vehicleNo.isNotBlank()) add("Vehicle No." to voucher.vehicleNo)
-            if (voucher.lrNo.isNotBlank()) add("LR/GR No." to voucher.lrNo)
-            if (voucher.destination.isNotBlank()) add("Destination" to voucher.destination)
+    private fun buildBuyerBlock(buyer: Party?, business: BusinessProfile): String = buildString {
+        append("<div class='small-label'>Buyer (Bill to)</div>")
+        append("<div class='buyer-name'>${escapeHtml(buyer?.name ?: "Cash / Walk-in Customer")}</div>")
+        if (!buyer?.address.isNullOrBlank()) append("<div>${escapeHtml(buyer!!.address).replace("\n", "<br/>")}</div>")
+        if (!buyer?.city.isNullOrBlank() || !buyer?.pin.isNullOrBlank()) {
+            append("<div>${escapeHtml(buyer?.city.orEmpty())}${if (!buyer?.pin.isNullOrBlank()) " - ${escapeHtml(buyer!!.pin)}" else ""}</div>")
         }
-        return rows.joinToString("") { (label, value) ->
-            """
-            <tr>
-              <td colspan='2' style='border-top:1px solid #cccccc;'>
-                <div class='sublabel'>$label</div>
-                <div>${escapeHtml(value)}</div>
-              </td>
-            </tr>
-            """.trimIndent()
+        if (!buyer?.phone.isNullOrBlank()) append("<div>Phone: ${escapeHtml(buyer!!.phone)}</div>")
+        append("<div>Place of Supply: ${escapeHtml(buyer?.state?.ifBlank { business.state } ?: business.state)}</div>")
+        append("<div>State Code: ${escapeHtml(buyer?.stateCode?.ifBlank { business.stateCode } ?: business.stateCode)}</div>")
+    }
+
+    private fun buildModeTermsValue(document: InvoiceDocument): String = when (document.voucher.paymentMode.normalizedPaymentMode()) {
+        "PART PAYMENT" -> "PART PAYMENT"
+        "CREDIT" -> "CREDIT"
+        "BANK" -> "BANK"
+        "UPI" -> "UPI"
+        "CHEQUE" -> "CHEQUE"
+        "CASH" -> "CASH"
+        else -> document.paymentSnapshot.modeLabel.ifBlank { "-" }
+    }
+
+    private fun buildTransportDeliveryPaymentHtml(voucher: Voucher, document: InvoiceDocument, business: BusinessProfile): String {
+        val transportLines = buildList {
+            if (voucher.transporterName.isNotBlank()) add("Transport: ${escapeHtml(voucher.transporterName)}")
+            if (voucher.vehicleNo.isNotBlank()) add("Vehicle No.: ${escapeHtml(voucher.vehicleNo)}")
+            if (voucher.lrNo.isNotBlank()) add("LR / GR No.: ${escapeHtml(voucher.lrNo)}")
+            if (voucher.destination.isNotBlank()) add("Destination: ${escapeHtml(voucher.destination)}")
         }
+        val paymentLine = when (voucher.paymentMode.normalizedPaymentMode()) {
+            "PART PAYMENT" -> "Part payment received: ${formatMoney(document.paymentSnapshot.partPaymentReceived)}<br/>Outstanding due: ${formatMoney(document.paymentSnapshot.balanceDue)}"
+            "CREDIT" -> "Full amount on credit."
+            "BANK" -> "Payment through bank transfer."
+            "UPI" -> "Payment through UPI."
+            "CHEQUE" -> "Payment through cheque."
+            "CASH" -> "Payment received in cash."
+            else -> escapeHtml(document.paymentSnapshot.summaryLabel.ifBlank { "-" })
+        }
+        val bankLines = buildList {
+            if (business.bankName.isNotBlank()) add("Seller's bank details")
+            if (business.bankName.isNotBlank()) add("Bank: ${escapeHtml(business.bankName)}")
+            if (business.accountNo.isNotBlank()) add("A/C No: ${escapeHtml(business.accountNo)}")
+            if (business.ifsc.isNotBlank()) add("IFSC: ${escapeHtml(business.ifsc)}")
+            if (business.branchName.isNotBlank()) add("Branch: ${escapeHtml(business.branchName)}")
+        }
+        return """
+        <div class='small-label'>Transport / Delivery / Payment</div>
+        <div>${transportLines.joinToString("<br/>").ifBlank { "-" }}</div>
+        <div style='border-top:1px solid #cfd5df; margin:8px 0 6px 0;'></div>
+        <div>$paymentLine</div>
+        ${if (bankLines.isNotEmpty()) "<div style='border-top:1px solid #cfd5df; margin:8px 0 6px 0;'></div><div><span class='bold'>${bankLines.first()}</span>${bankLines.drop(1).joinToString(prefix = "<br/>", separator = "<br/>")}</div>" else ""}
+        """.trimIndent()
     }
 
     private fun buildItemGstRows(document: InvoiceDocument, isIntrastate: Boolean): String {
         val rows = mutableListOf<String>()
-        if (document.voucher.cgst > 0.0 && isIntrastate) {
-            rows += """
-            <tr>
-              <td></td>
-              <td colspan='5' class='r' style='font-style:italic;font-weight:bold;'>OUTPUT CGST</td>
-              <td class='r'>${formatMoney(document.voucher.cgst)}</td>
-            </tr>
-            """.trimIndent()
-        }
-        if (document.voucher.sgst > 0.0 && isIntrastate) {
-            rows += """
-            <tr>
-              <td></td>
-              <td colspan='5' class='r' style='font-style:italic;font-weight:bold;'>OUTPUT SGST</td>
-              <td class='r'>${formatMoney(document.voucher.sgst)}</td>
-            </tr>
-            """.trimIndent()
-        }
-        if (document.voucher.igst > 0.0 && !isIntrastate) {
-            rows += """
-            <tr>
-              <td></td>
-              <td colspan='5' class='r' style='font-style:italic;font-weight:bold;'>OUTPUT IGST</td>
-              <td class='r'>${formatMoney(document.voucher.igst)}</td>
-            </tr>
-            """.trimIndent()
-        }
-        if (abs(document.voucher.roundOff) > 0.0) {
-            rows += """
-            <tr>
-              <td></td>
-              <td colspan='5' class='r' style='font-style:italic;font-weight:bold;'>ROUND OFF (S)</td>
-              <td class='r'>${formatSignedMoney(document.voucher.roundOff)}</td>
-            </tr>
-            """.trimIndent()
-        }
+        if (document.voucher.cgst > 0.0 && isIntrastate) rows += "<tr><td></td><td colspan='5' class='right bold'>CGST</td><td class='right'>${formatMoney(document.voucher.cgst)}</td></tr>"
+        if (document.voucher.sgst > 0.0 && isIntrastate) rows += "<tr><td></td><td colspan='5' class='right bold'>SGST</td><td class='right'>${formatMoney(document.voucher.sgst)}</td></tr>"
+        if (document.voucher.igst > 0.0 && !isIntrastate) rows += "<tr><td></td><td colspan='5' class='right bold'>IGST</td><td class='right'>${formatMoney(document.voucher.igst)}</td></tr>"
         return rows.joinToString("\n")
     }
 
-    private fun buildPaymentSummaryHtml(document: InvoiceDocument): String {
-        val snapshot = document.paymentSnapshot
-        val mode = document.voucher.paymentMode.uppercase(Locale.ENGLISH)
-        if (mode != "PART_PAYMENT" && mode != "PART PAYMENT" && mode != "CREDIT") return ""
-        val header = if (mode == "CREDIT") "Credit Sale Summary" else "Payment Summary"
-        val paidLabel = snapshot.partPaymentSubmode.takeIf { it.isNotBlank() }?.let { "Amount Paid (via ${escapeHtml(it)})" } ?: "Amount Paid"
-        val dueDateLabel = snapshot.dueDateLabel.ifBlank { "Not specified" }
-        val bodyRows = if (mode == "CREDIT") {
-            buildList {
-                add("<tr><td>Total Amount on Credit</td><td class='r'>Rs. ${formatMoney(snapshot.currentInvoiceAmount)}</td></tr>")
-                add("<tr><td>Amount Received So Far</td><td class='r'>Rs. ${formatMoney(snapshot.partPaymentReceived)}</td></tr>")
-                add("<tr><td class='b'>Outstanding Balance</td><td class='r b'>Rs. ${formatMoney(snapshot.balanceDue)}</td></tr>")
-                add("<tr><td>Due Date</td><td class='r'>${escapeHtml(dueDateLabel)}</td></tr>")
-            }
-        } else {
-            buildList {
-                add("<tr><td>Invoice Total</td><td class='r'>Rs. ${formatMoney(snapshot.currentInvoiceAmount)}</td></tr>")
-                add("<tr><td>$paidLabel</td><td class='r'>Rs. ${formatMoney(snapshot.partPaymentReceived)}</td></tr>")
-                add("<tr><td class='b'>Balance Due</td><td class='r b'>Rs. ${formatMoney(snapshot.balanceDue)}</td></tr>")
-                add("<tr><td>Due Date</td><td class='r'>${escapeHtml(dueDateLabel)}</td></tr>")
-            }
-        }
+    private fun buildChargeSummaryHtml(document: InvoiceDocument): String {
+        val totals = document.totals
         return """
-        <table class='psummary'>
-          <tr><td colspan='2' style='font-weight:bold;background:#f8f8f8;'>$header</td></tr>
-          ${bodyRows.joinToString("")}
+        <table class='inner-table snapshot-table'>
+          <tr><td>Items Quantity</td><td class='right num'>${formatQty(totals.totalQuantity)}</td></tr>
+          <tr><td>Taxable Amount</td><td class='right num'>${formatMoney(totals.taxableAmount)}</td></tr>
+          <tr><td>CGST</td><td class='right num'>${formatMoney(totals.cgst)}</td></tr>
+          <tr><td>${if (document.voucher.isIgst) "IGST" else "SGST / UTGST"}</td><td class='right num'>${formatMoney(if (document.voucher.isIgst) totals.igst else totals.sgst)}</td></tr>
+          ${document.additionalCharges.joinToString("") { "<tr><td>${escapeHtml(it.label.ifBlank { "Other" })}</td><td class='right num'>${formatMoney(it.amount)}</td></tr>" }}
+          <tr class='grand'><td>Grand Total</td><td class='right num'>${formatMoney(totals.netAmount)}</td></tr>
         </table>
         """.trimIndent()
     }
+
+    private fun buildBalanceSnapshotHtml(document: InvoiceDocument): String {
+        val snapshot = document.paymentSnapshot
+        return """
+        <table class='inner-table snapshot-table'>
+          <tr><td>Previous Due</td><td class='right num'>${formatMoney(snapshot.previousDue)}</td></tr>
+          <tr><td>Current Invoice</td><td class='right num'>${formatMoney(snapshot.currentInvoiceAmount)}</td></tr>
+          <tr><td>Part Payment</td><td class='right num'>${formatMoney(snapshot.partPaymentReceived)}</td></tr>
+          <tr><td>Outstanding / Due</td><td class='right num'>${formatMoney(snapshot.balanceDue)}</td></tr>
+          <tr class='grand'><td>Total Invoice</td><td class='right num'>${formatMoney(snapshot.currentInvoiceAmount)}</td></tr>
+        </table>
+        """.trimIndent()
+    }
+
+    private fun buildDeclarationHtml(rawTerms: String): String =
+        rawTerms.lines()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .mapIndexed { index, line ->
+                val prefix = if (line.first().isDigit()) "" else "${index + 1}. "
+                "<span class='terms-line'>$prefix${escapeHtml(line)}</span>"
+            }
+            .joinToString("")
 
     private fun buildGstBreakupHtml(
         document: InvoiceDocument,
@@ -843,44 +780,40 @@ object InvoiceGenerator {
             val rightAmount = if (isIntrastate) formatMoney(summary.sgstAmount) else formatMoney(summary.igstAmount)
             """
             <tr>
-              <td>${escapeHtml(summary.hsnCode)}</td>
-              <td class='r'>${formatMoney(summary.taxableValue)}</td>
-              <td class='c'>${rateLabel(summary.cgstRate)}</td>
-              <td class='r'>${formatMoney(summary.cgstAmount)}</td>
-              <td class='c'>$rightRate</td>
-              <td class='r'>$rightAmount</td>
-              <td class='r'>${formatMoney(summary.totalTaxAmount)}</td>
+              <td class='center num'>${escapeHtml(summary.hsnCode)}</td>
+              <td class='right num'>${formatMoney(summary.taxableValue)}</td>
+              <td class='center num'>${rateLabel(summary.cgstRate)}</td>
+              <td class='right num'>${formatMoney(summary.cgstAmount)}</td>
+              <td class='center num'>$rightRate</td>
+              <td class='right num'>$rightAmount</td>
+              <td class='right num'>${formatMoney(summary.totalTaxAmount)}</td>
             </tr>
             """.trimIndent()
         }
-        val totalRightAmount = if (isIntrastate) formatMoney(document.totals.sgst) else formatMoney(document.totals.igst)
+        val totalRate = if (isIntrastate) rateLabel(document.taxSummary.firstOrNull()?.sgstRate ?: 0.0) else rateLabel(document.taxSummary.firstOrNull()?.igstRate ?: 0.0)
+        val totalAmount = if (isIntrastate) formatMoney(document.totals.sgst) else formatMoney(document.totals.igst)
         return """
-        <table>
-          <tr class='gthdr'>
-            <th rowspan='2' style='width:20%;'>HSN/SAC</th>
-            <th rowspan='2' style='width:15%;'>Taxable Value</th>
-            <th colspan='2' style='width:25%;'>CGST</th>
-            <th colspan='2' style='width:25%;'>${if (isIntrastate) "SGST/UTGST" else "IGST"}</th>
-            <th rowspan='2' style='width:15%;'>Total Tax Amount</th>
-          </tr>
-          <tr class='gthdr'>
-            <th>Rate</th>
-            <th>Amount</th>
-            <th>Rate</th>
-            <th>Amount</th>
+        <table class='inner-table gst-table'>
+          <tr>
+            <th>HSN/SAC</th>
+            <th>Taxable Value</th>
+            <th>CGST Rate</th>
+            <th>CGST Amount</th>
+            <th>${if (isIntrastate) "SGST Rate" else "IGST Rate"}</th>
+            <th>${if (isIntrastate) "SGST Amount" else "IGST Amount"}</th>
+            <th>Total Tax Amount</th>
           </tr>
           $taxRows
-          <tr class='tot'>
-            <td class='r b'>Total</td>
-            <td class='r b'>${formatMoney(document.totals.taxableAmount)}</td>
-            <td class='c b'>${rateLabel(document.taxSummary.firstOrNull()?.cgstRate ?: 0.0)}</td>
-            <td class='r b'>${formatMoney(document.totals.cgst)}</td>
-            <td class='c b'>${if (isIntrastate) rateLabel(document.taxSummary.firstOrNull()?.sgstRate ?: 0.0) else rateLabel(document.taxSummary.firstOrNull()?.igstRate ?: 0.0)}</td>
-            <td class='r b'>$totalRightAmount</td>
-            <td class='r b'>${formatMoney(document.totals.totalTaxAmount)}</td>
+          <tr>
+            <td class='right bold'>Total</td>
+            <td class='right bold num'>${formatMoney(document.totals.taxableAmount)}</td>
+            <td class='center bold num'>${rateLabel(document.taxSummary.firstOrNull()?.cgstRate ?: 0.0)}</td>
+            <td class='right bold num'>${formatMoney(document.totals.cgst)}</td>
+            <td class='center bold num'>$totalRate</td>
+            <td class='right bold num'>$totalAmount</td>
+            <td class='right bold num'>${formatMoney(document.totals.totalTaxAmount)}</td>
           </tr>
         </table>
-        <div style='padding:6px 0 8px 2px;'>Tax Amount (in words) : <span class='b'>${escapeHtml(document.taxAmountInWords)}</span></div>
         """.trimIndent()
     }
 
@@ -996,20 +929,20 @@ object InvoiceGenerator {
         return when {
             extras.isAdvance && voucher.type == "RECEIPT" -> "ADVANCE RECEIVED"
             extras.isAdvance && voucher.type == "PAYMENT" -> "ADVANCE PAID"
-            voucher.paymentMode.equals("PART PAYMENT", ignoreCase = true) -> "PART PAYMENT"
-            voucher.paymentMode.equals("CREDIT", ignoreCase = true) -> "CREDIT"
-            else -> voucher.paymentMode.replace("_", " ")
+            voucher.paymentMode.normalizedPaymentMode() == "PART PAYMENT" -> "PART PAYMENT"
+            voucher.paymentMode.normalizedPaymentMode() == "CREDIT" -> "CREDIT"
+            else -> voucher.paymentMode.normalizedPaymentMode()
         }
     }
 
     private fun buildPaymentSummaryLabel(voucher: Voucher, extras: VoucherRenderExtras): String {
         return when {
             extras.isAdvance -> "Advance amount recorded for future adjustment."
-            voucher.paymentMode.equals("PART PAYMENT", ignoreCase = true) -> {
+            voucher.paymentMode.normalizedPaymentMode() == "PART PAYMENT" -> {
                 val dueText = extras.creditDueDate.takeIf { it.isNotBlank() }?.let(::formatDueDateText)
                 "Part payment received: ${formatMoney(extras.partialAmountPaid)}. Balance due: ${formatMoney(extras.remainingCreditAmount)}${dueText?.let { " by $it" } ?: ""}."
             }
-            voucher.paymentMode.equals("CREDIT", ignoreCase = true) -> {
+            voucher.paymentMode.normalizedPaymentMode() == "CREDIT" -> {
                 val dueText = extras.creditDueDate.takeIf { it.isNotBlank() }?.let(::formatDueDateText)
                 "Full amount on credit${dueText?.let { " due by $it" } ?: ""}."
             }
@@ -1250,6 +1183,9 @@ private fun formatSignedMoney(value: Double): String =
 
 private fun formatQty(value: Double): String =
     String.format(Locale.ENGLISH, "%.3f", value)
+
+private fun String.normalizedPaymentMode(): String =
+    trim().replace('_', ' ').uppercase(Locale.ENGLISH)
 
 private fun rateLabel(value: Double): String =
     if (value <= 0.0) "" else if (value % 1.0 == 0.0) String.format(Locale.ENGLISH, "%.0f%%", value) else String.format(Locale.ENGLISH, "%.2f%%", value)
