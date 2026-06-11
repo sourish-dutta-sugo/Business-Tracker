@@ -11,6 +11,7 @@ import com.example.data.AppRepository
 import com.example.data.BankCashTransaction
 import com.example.data.BillReceivable
 import com.example.data.BusinessProfile
+import com.example.data.Expense
 import com.example.data.FinancialYearUtils
 import com.example.data.LedgerAccount
 import com.example.data.LedgerEntry
@@ -42,7 +43,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val voucherType: String,
         val partyId: String?,
         val invoiceId: String?,
-        val amount: Double?
+        val amount: Double?,
+        val sourceVoucherId: String? = null
     )
 
     sealed class DbInitState {
@@ -65,6 +67,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val receiptAllocations: StateFlow<List<ReceiptAllocation>>
     val ledgerAccounts: StateFlow<List<LedgerAccount>>
     val billsReceivable: StateFlow<List<BillReceivable>>
+    val expenses: StateFlow<List<Expense>>
 
     val isSetupCompleted = MutableStateFlow(false)
     val financialYear = MutableStateFlow(FinancialYearUtils.currentFinancialYearCode())
@@ -138,6 +141,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         )
 
         billsReceivable = financialYear.flatMapLatest(repository::observeBillsReceivable).stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = emptyList()
+        )
+
+        expenses = financialYear.flatMapLatest(repository::observeExpenses).stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
             initialValue = emptyList()
@@ -245,6 +254,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteProduct(productId: String) {
         viewModelScope.launch {
             repository.deleteProduct(productId)
+        }
+    }
+
+    fun saveExpense(expense: Expense, onSuccess: () -> Unit) {
+        viewModelScope.launch {
+            repository.insertExpense(expense.copy(fyLabel = financialYear.value))
+            onSuccess()
+        }
+    }
+
+    fun deleteExpense(expenseId: String) {
+        viewModelScope.launch {
+            repository.deleteExpense(expenseId)
         }
     }
 

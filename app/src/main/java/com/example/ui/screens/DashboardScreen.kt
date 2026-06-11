@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Assignment
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material.icons.filled.TrendingUp
@@ -24,6 +25,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material3.*
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -31,6 +33,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -38,6 +42,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.ui.unit.sp
+import com.example.R
 import com.example.data.LedgerEntry
 import com.example.data.Utils
 import com.example.data.Voucher
@@ -53,7 +58,7 @@ fun DashboardScreen(
     viewModel: AppViewModel,
     dashboardViewModel: DashboardViewModel,
     isDesktop: Boolean = false,
-    onQuickAction: (String) -> Unit // "SALE", "PURCHASE", "RECEIPT", "PAYMENT"
+    onQuickAction: (String) -> Unit
 ) {
     val vouchers by viewModel.vouchers.collectAsState()
     val ledgerEntries by viewModel.ledgerEntries.collectAsState()
@@ -128,6 +133,9 @@ fun DashboardScreen(
         val purchase = vouchers.filter { it.type == "PURCHASE" && it.date >= firstDayOfMonth }.sumOf { it.taxableAmount }
         sales - purchase // Gross margin approximation as profit
     }
+    val lowStockProducts = remember(products) {
+        products.filter { it.currentStock <= it.lowStockThreshold }
+    }
 
     val profile by viewModel.profile.collectAsState()
     val headerState by dashboardViewModel.headerState.collectAsState()
@@ -149,12 +157,23 @@ fun DashboardScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.Top
         ) {
-            Text(
-                text = "ZeroBook",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
-                color = AppColors.textPrimary
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Image(
+                    painter = painterResource(R.drawable.zerobook_icon),
+                    contentDescription = "ZeroBook",
+                    modifier = Modifier.size(32.dp),
+                    contentScale = ContentScale.Fit
+                )
+                Text(
+                    text = "ZeroBook",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = AppColors.textPrimary
+                )
+            }
             Column(
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(2.dp)
@@ -182,6 +201,22 @@ fun DashboardScreen(
             }
         }
         HorizontalDivider(color = AppColors.divider, thickness = 1.dp)
+
+        if (lowStockProducts.isNotEmpty()) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0)),
+                border = BorderStroke(1.dp, Color(0xFFF59E0B))
+            ) {
+                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Low stock alert", fontWeight = FontWeight.Bold, color = Color(0xFFB45309))
+                    Text(
+                        "${lowStockProducts.size} product(s) are at or below threshold.",
+                        color = Color(0xFF92400E),
+                        fontSize = 12.sp
+                    )
+                }
+            }
+        }
 
         // Global Search Bar
         OutlinedTextField(
@@ -302,11 +337,11 @@ fun DashboardScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 QuickActionItem(
-                    label = "Vouchers",
-                    icon = Icons.Default.Receipt,
+                    label = "Quick Sale",
+                    icon = Icons.Default.Bolt,
                     backgroundColor = Color(0xFFE3F2FD),
                     iconColor = Color(0xFF1A73E8),
-                    onClick = { onQuickAction("SALE") }
+                    onClick = { onQuickAction("QUICK_SALE") }
                 )
                 QuickActionItem(
                     label = "Receipt",
@@ -330,11 +365,11 @@ fun DashboardScreen(
                     onClick = { onQuickAction("REPORTS") }
                 )
                 QuickActionItem(
-                    label = "Party",
+                    label = "Expenses",
                     icon = Icons.Default.TrendingUp,
                     backgroundColor = Color(0xFFF3E5F5),
                     iconColor = Color(0xFF9C27B0),
-                    onClick = { onQuickAction("PARTY") }
+                    onClick = { onQuickAction("EXPENSES") }
                 )
             }
 

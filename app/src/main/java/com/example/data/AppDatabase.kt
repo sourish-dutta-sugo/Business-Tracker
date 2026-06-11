@@ -22,9 +22,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         LedgerAccount::class,
         LedgerAccountFinancialYearBalance::class,
         BillReceivable::class,
-        FinancialYearAuditLog::class
+        FinancialYearAuditLog::class,
+        Expense::class
     ],
-    version = 10,
+    version = 12,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -43,6 +44,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun ledgerAccountFinancialYearBalanceDao(): LedgerAccountFinancialYearBalanceDao
     abstract fun billReceivableDao(): BillReceivableDao
     abstract fun financialYearAuditLogDao(): FinancialYearAuditLogDao
+    abstract fun expenseDao(): ExpenseDao
 
     companion object {
         @Volatile
@@ -55,15 +57,17 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "ZeroBook.db"
                 )
-                .addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
+                .addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
                 .addCallback(object : RoomDatabase.Callback() {
                     override fun onCreate(db: SupportSQLiteDatabase) {
                         super.onCreate(db)
                         ensureVoucherExtensionColumns(db)
                         ensureBusinessProfileExtensionColumns(db)
                         ensurePartyExtensionColumns(db)
+                        ensureProductExtensionColumns(db)
                         ensureFinancialYearColumnsAndIndexes(db)
                         ensureReminderScheduleTable(db)
+                        ensureExpenseTable(db)
                     }
 
                     override fun onOpen(db: SupportSQLiteDatabase) {
@@ -71,8 +75,10 @@ abstract class AppDatabase : RoomDatabase() {
                         ensureVoucherExtensionColumns(db)
                         ensureBusinessProfileExtensionColumns(db)
                         ensurePartyExtensionColumns(db)
+                        ensureProductExtensionColumns(db)
                         ensureFinancialYearColumnsAndIndexes(db)
                         ensureReminderScheduleTable(db)
+                        ensureExpenseTable(db)
                     }
                 })
                 .build()

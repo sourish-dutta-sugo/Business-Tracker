@@ -85,6 +85,18 @@ data class Party(
     @ColumnInfo(name = "credit_days")
     val creditDays: Int = 0,
     val notes: String = "",
+    @ColumnInfo(name = "total_purchases_amount")
+    val totalPurchasesAmount: Double = 0.0,
+    @ColumnInfo(name = "total_transactions")
+    val totalTransactions: Int = 0,
+    @ColumnInfo(name = "first_transaction_date")
+    val firstTransactionDate: String = "",
+    @ColumnInfo(name = "last_transaction_date")
+    val lastTransactionDate: String = "",
+    @ColumnInfo(name = "loyalty_points")
+    val loyaltyPoints: Int = 0,
+    val birthday: String = "",
+    val anniversary: String = "",
     val createdAt: Long = System.currentTimeMillis()
 )
 
@@ -98,6 +110,18 @@ data class Product(
     val purchaseRate: Double,
     val gstRate: Double, // 0.0, 5.0, 12.0, 18.0, 28.0
     val openingStock: Double,
+    @ColumnInfo(name = "current_stock")
+    val currentStock: Double = 0.0,
+    @ColumnInfo(name = "low_stock_threshold")
+    val lowStockThreshold: Double = 5.0,
+    @ColumnInfo(name = "stock_unit")
+    val stockUnit: String = "PCS",
+    @ColumnInfo(name = "barcode_value")
+    val barcodeValue: String = "",
+    @ColumnInfo(name = "secondary_unit")
+    val secondaryUnit: String = "",
+    @ColumnInfo(name = "conversion_factor")
+    val conversionFactor: Double = 1.0,
     val batchEnabled: Boolean = false,
     val batchNumber: String = "",
     val expiryEnabled: Boolean = false,
@@ -310,5 +334,20 @@ data class FinancialYearAuditLog(
     val financialYearCode: String,
     val targetFinancialYearCode: String? = null,
     val detailsJson: String = "",
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "expenses")
+data class Expense(
+    @PrimaryKey val id: String,
+    val date: Long,
+    val category: String,
+    val description: String = "",
+    val amount: Double,
+    val paymentMode: String = "CASH",
+    val referenceNo: String = "",
+    val attachmentPath: String = "",
+    val voucherNo: String = "",
+    val fyLabel: String = FinancialYearUtils.currentFinancialYearCode(),
     val createdAt: Long = System.currentTimeMillis()
 )

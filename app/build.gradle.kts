@@ -18,8 +18,9 @@ android {
     applicationId = "com.aistudio.retailbook.acntgp"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = 2
+    versionName = "2.0.0"
+    vectorDrawables.useSupportLibrary = true
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -37,7 +38,8 @@ android {
   buildTypes {
     release {
       isCrunchPngs = false
-      isMinifyEnabled = false
+      isMinifyEnabled = true
+      isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       signingConfig = signingConfigs.getByName("release")
     }
@@ -54,8 +56,14 @@ android {
   }
   packaging {
     resources {
-      excludes += "META-INF/NOTICE.md"
-      excludes += "META-INF/LICENSE.md"
+      excludes += setOf(
+        "META-INF/DEPENDENCIES",
+        "META-INF/LICENSE",
+        "META-INF/LICENSE.md",
+        "META-INF/NOTICE",
+        "META-INF/NOTICE.md",
+        "META-INF/*.kotlin_module"
+      )
     }
   }
   testOptions { unitTests { isIncludeAndroidResources = true } }
@@ -82,12 +90,12 @@ secrets {
 // This makes it easy to add them back in the future if needed.
 dependencies {
   implementation(platform(libs.androidx.compose.bom))
-  // implementation(libs.accompanist.permissions)
+  implementation(libs.accompanist.permissions)
   implementation(libs.androidx.activity.compose)
-  // implementation(libs.androidx.camera.camera2)
-  // implementation(libs.androidx.camera.core)
-  // implementation(libs.androidx.camera.lifecycle)
-  // implementation(libs.androidx.camera.view)
+  implementation(libs.androidx.camera.camera2)
+  implementation(libs.androidx.camera.core)
+  implementation(libs.androidx.camera.lifecycle)
+  implementation(libs.androidx.camera.view)
   implementation(libs.androidx.compose.material.icons.core)
   implementation(libs.androidx.compose.material.icons.extended)
   implementation(libs.androidx.compose.material3)
@@ -113,6 +121,7 @@ dependencies {
   implementation(libs.moshi.kotlin)
   implementation(libs.okhttp)
   implementation("com.google.mlkit:text-recognition:16.0.1")
+  implementation("com.google.mlkit:barcode-scanning:17.3.0")
   // implementation(libs.play.services.location)
   implementation(libs.retrofit)
   implementation("com.sun.mail:android-mail:1.6.7")

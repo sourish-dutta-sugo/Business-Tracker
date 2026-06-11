@@ -43,6 +43,7 @@ fun ReportsScreen(
     viewModel: AppViewModel,
     isDesktop: Boolean = false,
     navigateToLedgerBooks: () -> Unit,
+    navigateToExpenses: () -> Unit = {},
     navigateToNewVoucher: (String?) -> Unit,
     onNavigateBack: () -> Unit
 ) {
@@ -179,7 +180,8 @@ fun ReportsScreen(
                             Triple("BALANCE", "Balance Sheet", "Real assets, liabilities & equity distribution"),
                             Triple("GST", "GST Summary Status", "Tax output liability offset against Input credits"),
                             Triple("RECEIVABLES", "Outstanding Receivables", "Automated customer aging list & alerts"),
-                            Triple("PAYABLES", "Outstanding Payables", "Supplier credit balances status")
+                            Triple("PAYABLES", "Outstanding Payables", "Supplier credit balances status"),
+                            Triple("STOCK", "Stock Report", "Current stock, low stock, and out-of-stock items")
                         )
 
                         reportsList.forEach { (type, name, desc) ->
@@ -238,6 +240,7 @@ fun ReportsScreen(
                                             "GST" -> "GST Register Summary"
                                             "RECEIVABLES" -> "Outstanding Receivables Ledger"
                                             "PAYABLES" -> "Outstanding Payables Ledger"
+                                            "STOCK" -> "Stock Report"
                                             else -> activeReport
                                         },
                                         fontWeight = FontWeight.Bold,
@@ -368,6 +371,10 @@ fun ReportsScreen(
                                     viewModel = viewModel
                                 )
                             }
+
+                            "STOCK" -> {
+                                StockReportScreen(products = products)
+                            }
                         }
                     }
                 }
@@ -448,10 +455,24 @@ fun ReportsScreen(
                     )
 
                     ReportMenuCard(
+                        title = "Stock Report",
+                        description = "Current stock, thresholds, and low stock export",
+                        icon = Icons.Default.Inventory2,
+                        onClick = { activeReport = "STOCK" }
+                    )
+
+                    ReportMenuCard(
                         title = "Ledger Books",
                         description = "Browse chart of accounts and ledger balances",
                         icon = Icons.Default.AccountBalance,
                         onClick = navigateToLedgerBooks
+                    )
+
+                    ReportMenuCard(
+                        title = "Expenses",
+                        description = "Track operating expenses and export the register",
+                        icon = Icons.Default.Payments,
+                        onClick = navigateToExpenses
                     )
                 }
             }
@@ -470,6 +491,7 @@ fun ReportsScreen(
                                         "GST" -> "GST Register Summary"
                                         "RECEIVABLES" -> "Outstanding Receivables Ledger"
                                         "PAYABLES" -> "Outstanding Payables Ledger"
+                                        "STOCK" -> "Stock Report"
                                         else -> activeReport
                                     },
                                     fontWeight = FontWeight.Bold,
@@ -597,17 +619,21 @@ fun ReportsScreen(
                             }
                         }
 
-                        "PAYABLES" -> {
-                            PayablesBillsListView(
-                                vouchers = vouchers,
-                                parties = parties,
-                                navigateToNewVoucher = navigateToNewVoucher,
-                                viewModel = viewModel
-                            )
+                            "PAYABLES" -> {
+                                PayablesBillsListView(
+                                    vouchers = vouchers,
+                                    parties = parties,
+                                    navigateToNewVoucher = navigateToNewVoucher,
+                                    viewModel = viewModel
+                                )
+                            }
+
+                            "STOCK" -> {
+                                StockReportScreen(products = products)
+                            }
                         }
                     }
                 }
-            }
         }
     }
 }

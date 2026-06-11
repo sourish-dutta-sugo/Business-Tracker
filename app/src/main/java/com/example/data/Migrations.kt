@@ -97,6 +97,47 @@ fun ensurePartyExtensionColumns(db: SupportSQLiteDatabase) {
     ensureColumn("credit_limit", "ALTER TABLE parties ADD COLUMN credit_limit REAL NOT NULL DEFAULT 0")
     ensureColumn("credit_days", "ALTER TABLE parties ADD COLUMN credit_days INTEGER NOT NULL DEFAULT 0")
     ensureColumn("notes", "ALTER TABLE parties ADD COLUMN notes TEXT NOT NULL DEFAULT ''")
+    ensureColumn("total_purchases_amount", "ALTER TABLE parties ADD COLUMN total_purchases_amount REAL NOT NULL DEFAULT 0")
+    ensureColumn("total_transactions", "ALTER TABLE parties ADD COLUMN total_transactions INTEGER NOT NULL DEFAULT 0")
+    ensureColumn("first_transaction_date", "ALTER TABLE parties ADD COLUMN first_transaction_date TEXT NOT NULL DEFAULT ''")
+    ensureColumn("last_transaction_date", "ALTER TABLE parties ADD COLUMN last_transaction_date TEXT NOT NULL DEFAULT ''")
+    ensureColumn("loyalty_points", "ALTER TABLE parties ADD COLUMN loyalty_points INTEGER NOT NULL DEFAULT 0")
+    ensureColumn("birthday", "ALTER TABLE parties ADD COLUMN birthday TEXT NOT NULL DEFAULT ''")
+    ensureColumn("anniversary", "ALTER TABLE parties ADD COLUMN anniversary TEXT NOT NULL DEFAULT ''")
+}
+
+fun ensureProductExtensionColumns(db: SupportSQLiteDatabase) {
+    val productColumns = db.query("PRAGMA table_info(products)").use { cursor ->
+        buildSet {
+            val nameIndex = cursor.getColumnIndex("name")
+            while (cursor.moveToNext()) {
+                add(cursor.getString(nameIndex))
+            }
+        }
+    }
+
+    fun ensureColumn(name: String, sql: String) {
+        if (name !in productColumns) {
+            db.execSQL(sql)
+        }
+    }
+
+    ensureColumn("current_stock", "ALTER TABLE products ADD COLUMN current_stock REAL NOT NULL DEFAULT 0")
+    ensureColumn("low_stock_threshold", "ALTER TABLE products ADD COLUMN low_stock_threshold REAL NOT NULL DEFAULT 5")
+    ensureColumn("stock_unit", "ALTER TABLE products ADD COLUMN stock_unit TEXT NOT NULL DEFAULT 'PCS'")
+    ensureColumn("barcode_value", "ALTER TABLE products ADD COLUMN barcode_value TEXT NOT NULL DEFAULT ''")
+    ensureColumn("secondary_unit", "ALTER TABLE products ADD COLUMN secondary_unit TEXT NOT NULL DEFAULT ''")
+    ensureColumn("conversion_factor", "ALTER TABLE products ADD COLUMN conversion_factor REAL NOT NULL DEFAULT 1.0")
+    db.execSQL(
+        """
+        UPDATE products
+        SET current_stock = CASE
+            WHEN current_stock = 0 AND openingStock > 0 THEN openingStock
+            ELSE current_stock
+        END
+        """.trimIndent()
+    )
+    db.execSQL("UPDATE products SET stock_unit = unit WHERE stock_unit IS NULL OR stock_unit = ''")
 }
 
 fun ensureReminderScheduleTable(db: SupportSQLiteDatabase) {
@@ -113,6 +154,26 @@ fun ensureReminderScheduleTable(db: SupportSQLiteDatabase) {
             is_active INTEGER DEFAULT 1,
             last_sent TEXT DEFAULT '',
             created_at INTEGER DEFAULT 0
+        )
+        """.trimIndent()
+    )
+}
+
+fun ensureExpenseTable(db: SupportSQLiteDatabase) {
+    db.execSQL(
+        """
+        CREATE TABLE IF NOT EXISTS expenses (
+            id TEXT NOT NULL PRIMARY KEY,
+            date INTEGER NOT NULL,
+            category TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            amount REAL NOT NULL,
+            paymentMode TEXT NOT NULL DEFAULT 'CASH',
+            referenceNo TEXT NOT NULL DEFAULT '',
+            attachmentPath TEXT NOT NULL DEFAULT '',
+            voucherNo TEXT NOT NULL DEFAULT '',
+            fyLabel TEXT NOT NULL DEFAULT '',
+            createdAt INTEGER NOT NULL DEFAULT 0
         )
         """.trimIndent()
     )
@@ -466,5 +527,28 @@ val MIGRATION_9_10 = object : Migration(9, 10) {
         ensurePartyExtensionColumns(db)
         ensureFinancialYearColumnsAndIndexes(db)
         ensureReminderScheduleTable(db)
+    }
+}
+
+val MIGRATION_10_11 = object : Migration(10, 11) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        ensureVoucherExtensionColumns(db)
+        ensureBusinessProfileExtensionColumns(db)
+        ensurePartyExtensionColumns(db)
+        ensureProductExtensionColumns(db)
+        ensureFinancialYearColumnsAndIndexes(db)
+        ensureReminderScheduleTable(db)
+    }
+}
+
+val MIGRATION_11_12 = object : Migration(11, 12) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        ensureVoucherExtensionColumns(db)
+        ensureBusinessProfileExtensionColumns(db)
+        ensurePartyExtensionColumns(db)
+        ensureProductExtensionColumns(db)
+        ensureFinancialYearColumnsAndIndexes(db)
+        ensureReminderScheduleTable(db)
+        ensureExpenseTable(db)
     }
 }

@@ -11,6 +11,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshots.Snapshot
@@ -85,6 +86,7 @@ fun VoucherItemEntrySheet(
     }
 
     var showProductDropdown by remember { mutableStateOf(false) }
+    var showBarcodeScanner by remember { mutableStateOf(false) }
     var nameError by remember { mutableStateOf(false) }
     var qtyError by remember { mutableStateOf(false) }
     var rateError by remember { mutableStateOf(false) }
@@ -92,7 +94,10 @@ fun VoucherItemEntrySheet(
 
     val filteredProducts = remember(productName, products) {
         if (productName.isBlank()) products.take(8)
-        else products.filter { it.name.contains(productName, ignoreCase = true) }.take(8)
+        else products.filter {
+            it.name.contains(productName, ignoreCase = true) ||
+                it.barcodeValue.contains(productName, ignoreCase = true)
+        }.take(8)
     }
 
     val hsnSuggestions = remember(productName, hsnCode) {
@@ -143,6 +148,22 @@ fun VoucherItemEntrySheet(
         }
     }
 
+    if (showBarcodeScanner) {
+        BarcodeScannerDialog(
+            onDismiss = { showBarcodeScanner = false },
+            onScanned = { code ->
+                showBarcodeScanner = false
+                val matched = products.firstOrNull { it.barcodeValue.equals(code, ignoreCase = true) }
+                if (matched != null) {
+                    applyProductSelection(matched)
+                } else {
+                    productName = code
+                    productId = ""
+                }
+            }
+        )
+    }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = AppColors.cardBg
@@ -181,12 +202,17 @@ fun VoucherItemEntrySheet(
                     colors = fieldColors,
                     singleLine = true,
                     trailingIcon = {
-                        Icon(
-                            Icons.Default.KeyboardArrowDown,
-                            null,
-                            tint = TextGray,
-                            modifier = Modifier.clickable { showProductDropdown = true }
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(onClick = { showBarcodeScanner = true }) {
+                                Icon(Icons.Default.Search, contentDescription = "Scan barcode", tint = TextGray)
+                            }
+                            Icon(
+                                Icons.Default.KeyboardArrowDown,
+                                null,
+                                tint = TextGray,
+                                modifier = Modifier.clickable { showProductDropdown = true }
+                            )
+                        }
                     }
                 )
                 DropdownMenu(

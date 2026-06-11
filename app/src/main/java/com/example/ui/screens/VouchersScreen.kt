@@ -709,6 +709,7 @@ fun NewVoucherScreen(
     val isTablet = screenWidthDp >= 600
     
     var step by remember { mutableStateOf(voucherId?.let { 2 } ?: 1) } // 1: Type selection, 2: Form & Line items
+    var formStep by remember { mutableStateOf(1) }
     
     // Voucher details
     var selectedType by remember { mutableStateOf("SALE") }
@@ -765,6 +766,7 @@ fun NewVoucherScreen(
             val voucher = viewModel.getVoucherById(voucherId)
             if (voucher != null) {
                 selectedType = voucher.type
+                formStep = if (voucher.type == "SALE" || voucher.type == "PURCHASE") 3 else 1
                 voucherNo = voucher.voucherNo
                 voucherDate = voucher.date
                 selectedParty = parties.find { it.id == voucher.partyId }
@@ -896,6 +898,7 @@ fun NewVoucherScreen(
         pstate.isNotEmpty() && pstate != bstate
     }
     val isCustomerVoucher = selectedType == "SALE" || selectedType == "RECEIPT" || selectedType == "SALE_RETURN"
+    val isThreeStepVoucher = selectedType == "SALE" || selectedType == "PURCHASE"
     val partyTypeLabel = if (isCustomerVoucher) "customer" else "supplier"
     val hasTransportDetails = remember(
         transportName,
@@ -1089,6 +1092,22 @@ fun NewVoucherScreen(
                 setDirectAmount(request.amount ?: pendingInvoices.filter { pendingInvoiceChecks[it.id] != false }.sumOf { it.outstandingAmount })
             }
             viewModel.setVoucherPrefillRequest(null)
+        } else if (request.voucherType == "SALE" && !request.sourceVoucherId.isNullOrBlank()) {
+            val sourceVoucher = vouchers.find { it.id == request.sourceVoucherId }
+            if (sourceVoucher != null) {
+                selectedType = "SALE"
+                step = 2
+                selectedParty = parties.find { it.id == sourceVoucher.partyId }
+                lineItems.clear()
+                lineItems.addAll(viewModel.getItemsForVoucher(sourceVoucher.id).firstOrNull().orEmpty().map {
+                    it.copy(id = UUID.randomUUID().toString(), voucherId = "")
+                })
+                additionalCharges.clear()
+                if (sourceVoucher.type == "QUOTATION") {
+                    paymentMode = "CREDIT"
+                }
+            }
+            viewModel.setVoucherPrefillRequest(null)
         }
     }
 
@@ -1180,7 +1199,7 @@ fun NewVoucherScreen(
                 chequeDate = if (paymentMode == "CHEQUE") chequeDate else null,
                 bankName = if (paymentMode == "CHEQUE") bankName else null,
                 isIgst = isInterstate,
-                status = "POSTED",
+                status = if (selectedType == "QUOTATION" || selectedType == "DELIVERY_CHALLAN") "DRAFT" else "POSTED",
                 receiptImagePath = null,
                 attachmentPath = savedAttachmentPath,
                 bankIfsc = if (paymentMode == "BANK") bankIfsc else null,
@@ -1349,6 +1368,8 @@ fun NewVoucherScreen(
                 val types = listOf(
                     "SALE" to "Generate modern tax invoice for customers",
                     "PURCHASE" to "Record inward supply bills & invoices",
+                    "QUOTATION" to "Create estimate or quotation without posting ledgers",
+                    "DELIVERY_CHALLAN" to "Create delivery challan without ledger posting",
                     "RECEIPT" to "Receive outstanding/cash from party",
                     "PAYMENT" to "Record outward cash/bank payment directly",
                     "SALE_RETURN" to "Reverse previous sales (Credit Note)",
@@ -1363,6 +1384,7 @@ fun NewVoucherScreen(
                             .fillMaxWidth()
                             .clickable {
                                 selectedType = if (type == "SALE_RETURN") "SALE_RETURN" else if (type == "PURCHASE_RETURN") "PURCHASE_RETURN" else type as String
+                                formStep = 1
                                 step = 2
                             }
                             .border(0.5.dp, Color(0xFFE8E8E8), RoundedCornerShape(8.dp)),
@@ -1384,34 +1406,98 @@ fun NewVoucherScreen(
         Scaffold(
             containerColor = AppColors.screenBg,
             topBar = {
-                TopAppBar(
-                    title = { Text("New $selectedType", fontWeight = FontWeight.Bold) },
-                    navigationIcon = {
-                        IconButton(onClick = { step = 1 }) {
-                            Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back")
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = AppColors.cardBg,
-                        titleContentColor = Color(0xFF0F172A),
-                        navigationIconContentColor = Color(0xFF0F172A)
+                Column {
+                    TopAppBar(
+                        title = {
+                            Column {
+                                Text(
+                                    if (isThreeStepVoucher) "Step $formStep of 3" else "New $selectedType",
+                                    fontWeight = FontWeight.Bold
+                                )
+                                if (isThreeStepVoucher) {
+                                    Text(
+                                        when (formStep) {
+                                            1 -> "Party and details"
+                                            2 -> "Items"
+                                            else -> "Review and save"
+                                        },
+                                        fontSize = 12.sp,
+                                        color = AppColors.textSecondary
+                                    )
+                                }
+                            }
+                        },
+                        navigationIcon = {
+                            IconButton(onClick = {
+                                if (isThreeStepVoucher && formStep > 1) formStep -= 1 else step = 1
+                            }) {
+                                Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back")
+                            }
+                        },
+                        colors = TopAppBarDefaults.topAppBarColors(
+                            containerColor = AppColors.cardBg,
+                            titleContentColor = Color(0xFF0F172A),
+                            navigationIconContentColor = Color(0xFF0F172A)
+                        )
                     )
-                )
+                    if (isThreeStepVoucher) {
+                        LinearProgressIndicator(
+                            progress = { formStep / 3f },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = AppColors.primary
+                        )
+                    }
+                }
             },
             bottomBar = {
                 if (!isDesktop) {
-                    StickyBottomBar(
-                        netAmount = netAmount.value,
-                        selectedType = selectedType,
-                        saveButtonLabel = if (isEditMode) "Update & Post" else "Save & Post",
-                        onSaveClick = { shouldPrint -> validateAndSave(shouldPrint) }
-                    )
+                    if (isThreeStepVoucher && formStep < 3) {
+                        Surface(
+                            tonalElevation = 8.dp,
+                            shadowElevation = 8.dp,
+                            color = Color.White,
+                            modifier = Modifier.fillMaxWidth().navigationBarsPadding()
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = { if (formStep > 1) formStep -= 1 else step = 1 },
+                                    modifier = Modifier.weight(1f).height(44.dp)
+                                ) {
+                                    Text("Back")
+                                }
+                                Button(
+                                    onClick = { formStep = (formStep + 1).coerceAtMost(3) },
+                                    modifier = Modifier.weight(1f).height(44.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = AppColors.primary)
+                                ) {
+                                    Text("Next", color = AppColors.textOnPrimary)
+                                }
+                            }
+                        }
+                    } else {
+                        StickyBottomBar(
+                            netAmount = netAmount.value,
+                            selectedType = selectedType,
+                            saveButtonLabel = if (selectedType == "QUOTATION" || selectedType == "DELIVERY_CHALLAN") {
+                                if (isEditMode) "Update Draft" else "Save Draft"
+                            } else {
+                                if (isEditMode) "Update & Post" else "Save & Post"
+                            },
+                            onSaveClick = { shouldPrint -> validateAndSave(shouldPrint) }
+                        )
+                    }
                 }
             },
             modifier = Modifier.fillMaxSize()
         ) { innerPadding ->
             @Composable
             fun FormContent(showStickyBar: Boolean) {
+                val showDetailsStep = !isThreeStepVoucher || formStep == 1
+                val showItemsStep = !isThreeStepVoucher || formStep == 2
+                val showReviewStep = !isThreeStepVoucher || formStep == 3
                 Column(
                     modifier = Modifier.fillMaxSize()
                 ) {
@@ -1433,6 +1519,7 @@ fun NewVoucherScreen(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
+                    if (showDetailsStep) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         RetailTextField(
                             value = voucherNo,
@@ -1765,7 +1852,9 @@ fun NewVoucherScreen(
                             }
                         }
                     }
+                    }
 
+                    if (showItemsStep) {
                     RetailTextField(
                         value = narration,
                         onValueChange = { narration = it },
@@ -2663,6 +2752,7 @@ fun NewVoucherScreen(
                         }
                     }
                 }
+                    }
 
                 if (showParsedBillDialog) {
                     ParsedBillItemsDialog(
@@ -2703,54 +2793,110 @@ fun NewVoucherScreen(
                     )
                 }
 
-                // GST Live Summary Panel
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .border(1.dp, Color(0xFFE8E8E8), RoundedCornerShape(0.dp)),
-                    colors = CardDefaults.cardColors(containerColor = AppColors.cardBg)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("Summary", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                if (showReviewStep) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = AppColors.cardBg),
+                        border = BorderStroke(1.dp, AppColors.border),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("Review Before Saving", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = AppColors.textPrimary)
+                            Text(
+                                when (selectedType) {
+                                    "SALE" -> "Check party, payment mode, items, and final total before posting the sale."
+                                    "PURCHASE" -> "Check supplier, bill attachment, items, and final total before posting the purchase."
+                                    else -> "Review the voucher details before saving."
+                                },
+                                fontSize = 12.sp,
+                                color = AppColors.textSecondary
+                            )
+                            Text("Party: ${selectedParty?.name ?: "Cash / Walk-in Customer"}", fontSize = 12.sp, color = AppColors.textPrimary)
+                            Text("Mode: $paymentMode", fontSize = 12.sp, color = AppColors.textPrimary)
+                            Text("Items: ${lineItems.size}", fontSize = 12.sp, color = AppColors.textPrimary)
                         }
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("Taxable Amount:", fontSize = 11.sp, color = AppColors.textSecondary)
-                            Text(Utils.formatIndianCurrency(taxableAmount.value), fontSize = 11.sp, color = AppColors.textSecondary)
-                        }
-                        additionalCharges.forEach { charge ->
+                    }
+
+                    if (!isDesktop) {
+                        LiveInvoicePreview(
+                            profile = profile,
+                            party = selectedParty,
+                            voucherNo = voucherNo,
+                            voucherDate = voucherDate,
+                            paymentMode = paymentMode,
+                            creditDueDate = creditDueDateText,
+                            partialAmountPaid = partialAmountPaidText.toDoubleOrNull() ?: 0.0,
+                            partialPaymentSubmode = partialPaymentSubmode,
+                            remainingCreditAmount = when {
+                                selectedType == "SALE" && paymentMode == "PART PAYMENT" -> (netAmount.value - (partialAmountPaidText.toDoubleOrNull() ?: 0.0)).coerceAtLeast(0.0)
+                                selectedType == "SALE" && paymentMode == "CREDIT" -> netAmount.value
+                                else -> 0.0
+                            },
+                            lineItems = lineItems,
+                            additionalCharges = additionalCharges.toList(),
+                            taxableAmount = taxableAmount.value,
+                            cgst = cgst.value,
+                            sgst = sgst.value,
+                            igst = igst.value,
+                            roundOff = roundOff.value,
+                            netAmount = netAmount.value,
+                            selectedType = selectedType
+                        )
+                    }
+
+                    // GST Live Summary Panel
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, Color(0xFFE8E8E8), RoundedCornerShape(0.dp)),
+                        colors = CardDefaults.cardColors(containerColor = AppColors.cardBg)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text(charge.label.ifBlank { "Other" }, fontSize = 11.sp, color = AppColors.textSecondary)
-                                Text(Utils.formatIndianCurrency(charge.amount), fontSize = 11.sp, color = AppColors.textSecondary)
-                            }
-                        }
-                        if (isInterstate) {
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("IGST:", fontSize = 11.sp, color = AppColors.textSecondary)
-                                Text(Utils.formatIndianCurrency(igst.value), fontSize = 11.sp, color = AppColors.textSecondary)
-                            }
-                        } else {
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("CGST:", fontSize = 11.sp, color = AppColors.textSecondary)
-                                Text(Utils.formatIndianCurrency(cgst.value), fontSize = 11.sp, color = AppColors.textSecondary)
+                                Text("Summary", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                             }
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("SGST:", fontSize = 11.sp, color = AppColors.textSecondary)
-                                Text(Utils.formatIndianCurrency(sgst.value), fontSize = 11.sp, color = AppColors.textSecondary)
+                                Text("Taxable Amount:", fontSize = 11.sp, color = AppColors.textSecondary)
+                                Text(Utils.formatIndianCurrency(taxableAmount.value), fontSize = 11.sp, color = AppColors.textSecondary)
                             }
-                        }
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("Round Off:", fontSize = 11.sp, color = AppColors.textSecondary)
-                            Text(Utils.formatIndianCurrency(roundOff.value), fontSize = 11.sp, color = AppColors.textSecondary)
-                        }
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("Net Total Owed:", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                            Text(Utils.formatIndianCurrency(netAmount.value), fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.primary)
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("Voucher:", fontSize = 11.sp, color = AppColors.textSecondary)
+                                Text(voucherNo, fontSize = 11.sp, color = AppColors.textSecondary)
+                            }
+                            additionalCharges.forEach { charge ->
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text(charge.label.ifBlank { "Other" }, fontSize = 11.sp, color = AppColors.textSecondary)
+                                    Text(Utils.formatIndianCurrency(charge.amount), fontSize = 11.sp, color = AppColors.textSecondary)
+                                }
+                            }
+                            if (isInterstate) {
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("IGST:", fontSize = 11.sp, color = AppColors.textSecondary)
+                                    Text(Utils.formatIndianCurrency(igst.value), fontSize = 11.sp, color = AppColors.textSecondary)
+                                }
+                            } else {
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("CGST:", fontSize = 11.sp, color = AppColors.textSecondary)
+                                    Text(Utils.formatIndianCurrency(cgst.value), fontSize = 11.sp, color = AppColors.textSecondary)
+                                }
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("SGST:", fontSize = 11.sp, color = AppColors.textSecondary)
+                                    Text(Utils.formatIndianCurrency(sgst.value), fontSize = 11.sp, color = AppColors.textSecondary)
+                                }
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("Round Off:", fontSize = 11.sp, color = AppColors.textSecondary)
+                                Text(Utils.formatIndianCurrency(roundOff.value), fontSize = 11.sp, color = AppColors.textSecondary)
+                            }
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Net Total Owed:", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                Text(Utils.formatIndianCurrency(netAmount.value), fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.primary)
+                            }
                         }
                     }
                 }
@@ -2762,7 +2908,11 @@ fun NewVoucherScreen(
                 StickyBottomBar(
                     netAmount = netAmount.value,
                     selectedType = selectedType,
-                    saveButtonLabel = if (isEditMode) "Update & Post" else "Save & Post",
+                    saveButtonLabel = if (selectedType == "QUOTATION" || selectedType == "DELIVERY_CHALLAN") {
+                        if (isEditMode) "Update Draft" else "Save Draft"
+                    } else {
+                        if (isEditMode) "Update & Post" else "Save & Post"
+                    },
                     onSaveClick = { shouldPrint -> validateAndSave(shouldPrint) }
                 )
             }
@@ -2785,30 +2935,53 @@ fun NewVoucherScreen(
                         .fillMaxHeight()
                         .background(AppColors.screenBg)
                 ) {
-                    LiveInvoicePreview(
-                        profile = profile,
-                        party = selectedParty,
-                        voucherNo = voucherNo,
-                        voucherDate = voucherDate,
-                        paymentMode = paymentMode,
-                        creditDueDate = creditDueDateText,
-                        partialAmountPaid = partialAmountPaidText.toDoubleOrNull() ?: 0.0,
-                        partialPaymentSubmode = partialPaymentSubmode,
-                        remainingCreditAmount = when {
-                            selectedType == "SALE" && paymentMode == "PART PAYMENT" -> (netAmount.value - (partialAmountPaidText.toDoubleOrNull() ?: 0.0)).coerceAtLeast(0.0)
-                            selectedType == "SALE" && paymentMode == "CREDIT" -> netAmount.value
-                            else -> 0.0
-                        },
-                        lineItems = lineItems,
-                        additionalCharges = additionalCharges.toList(),
-                        taxableAmount = taxableAmount.value,
-                        cgst = cgst.value,
-                        sgst = sgst.value,
-                        igst = igst.value,
-                        roundOff = roundOff.value,
-                        netAmount = netAmount.value,
-                        selectedType = selectedType
-                    )
+                    if (!isThreeStepVoucher || formStep == 3) {
+                        LiveInvoicePreview(
+                            profile = profile,
+                            party = selectedParty,
+                            voucherNo = voucherNo,
+                            voucherDate = voucherDate,
+                            paymentMode = paymentMode,
+                            creditDueDate = creditDueDateText,
+                            partialAmountPaid = partialAmountPaidText.toDoubleOrNull() ?: 0.0,
+                            partialPaymentSubmode = partialPaymentSubmode,
+                            remainingCreditAmount = when {
+                                selectedType == "SALE" && paymentMode == "PART PAYMENT" -> (netAmount.value - (partialAmountPaidText.toDoubleOrNull() ?: 0.0)).coerceAtLeast(0.0)
+                                selectedType == "SALE" && paymentMode == "CREDIT" -> netAmount.value
+                                else -> 0.0
+                            },
+                            lineItems = lineItems,
+                            additionalCharges = additionalCharges.toList(),
+                            taxableAmount = taxableAmount.value,
+                            cgst = cgst.value,
+                            sgst = sgst.value,
+                            igst = igst.value,
+                            roundOff = roundOff.value,
+                            netAmount = netAmount.value,
+                            selectedType = selectedType
+                        )
+                    } else {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = AppColors.cardBg),
+                            border = BorderStroke(1.dp, AppColors.border),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text("Preview unlocks on Step 3", fontWeight = FontWeight.Bold, color = AppColors.textPrimary)
+                                Text(
+                                    "Finish the details and items steps to review the live voucher preview before saving.",
+                                    color = AppColors.textSecondary,
+                                    fontSize = 12.sp
+                                )
+                            }
+                        }
+                    }
                 }
             }
         } else {
@@ -3536,11 +3709,13 @@ fun NewVoucherScreen(
                     ProductOptionalFields(
                         hsnCode = newProdHsn,
                         onHsnChange = { newProdHsn = it },
-                        hsnSuggestions = quickHsnSuggestions,
-                        onHsnSelected = {
-                            newProdHsn = it
-                            wasQuickHsnAutoFilled = true
-                            quickHsnSuggestions = emptyList()
+                        onAutoDetectHsn = {
+                            val match = quickHsnSuggestions.firstOrNull()
+                            if (match != null) {
+                                newProdHsn = match.code
+                                wasQuickHsnAutoFilled = true
+                                quickHsnSuggestions = emptyList()
+                            }
                         },
                         batchEnabled = batchEnabled,
                         onBatchEnabledChange = { batchEnabled = it },

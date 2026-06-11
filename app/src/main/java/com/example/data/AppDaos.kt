@@ -311,3 +311,18 @@ interface FinancialYearAuditLogDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertLog(log: FinancialYearAuditLog)
 }
+
+@Dao
+interface ExpenseDao {
+    @Query("SELECT * FROM expenses WHERE fyLabel = :financialYearCode ORDER BY date DESC, createdAt DESC")
+    fun getExpenses(financialYearCode: String): Flow<List<Expense>>
+
+    @Query("SELECT * FROM expenses WHERE fyLabel = :financialYearCode ORDER BY date DESC, createdAt DESC")
+    suspend fun getExpensesSync(financialYearCode: String): List<Expense>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertExpense(expense: Expense)
+
+    @Query("DELETE FROM expenses WHERE id = :id")
+    suspend fun deleteExpense(id: String)
+}

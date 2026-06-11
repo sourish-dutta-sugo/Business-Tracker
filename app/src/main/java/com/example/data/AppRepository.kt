@@ -56,9 +56,15 @@ class AppRepository(private val db: AppDatabase) {
                     }
                     product.copy(
                         openingStock = yearBalance.openingStock,
-                        purchaseRate = derivedPurchaseRate
+                        purchaseRate = derivedPurchaseRate,
+                        currentStock = if (product.currentStock == 0.0 && yearBalance.openingStock > 0.0) {
+                            yearBalance.openingStock
+                        } else {
+                            product.currentStock
+                        },
+                        stockUnit = product.stockUnit.ifBlank { product.unit }
                     )
-                } ?: product
+                } ?: product.copy(stockUnit = product.stockUnit.ifBlank { product.unit })
             }
         }
 
@@ -92,6 +98,9 @@ class AppRepository(private val db: AppDatabase) {
 
     fun observeBillsReceivable(financialYearCode: String): Flow<List<BillReceivable>> =
         db.billReceivableDao().getAllBills(financialYearCode)
+
+    fun observeExpenses(financialYearCode: String): Flow<List<Expense>> =
+        db.expenseDao().getExpenses(financialYearCode)
 
     fun observeAvailableFinancialYearCodes(): Flow<List<String>> =
         financialYears.map { storedYears ->
@@ -327,7 +336,12 @@ class AppRepository(private val db: AppDatabase) {
     suspend fun insertProduct(product: Product, financialYearCode: String) {
         ensureFinancialYearExists(financialYearCode)
         db.withTransaction {
-            db.productDao().insertProduct(product)
+            db.productDao().insertProduct(
+                product.copy(
+                    currentStock = if (product.currentStock == 0.0) product.openingStock else product.currentStock,
+                    stockUnit = product.stockUnit.ifBlank { product.unit }
+                )
+            )
             db.productFinancialYearBalanceDao().upsertBalance(
                 ProductFinancialYearBalance(
                     productId = product.id,
@@ -341,6 +355,62 @@ class AppRepository(private val db: AppDatabase) {
 
     suspend fun deleteProduct(id: String) {
         db.productDao().deleteProduct(id)
+    }
+
+    suspend fun insertExpense(expense: Expense) {
+        ensureFinancialYearExists(expense.fyLabel)
+        db.withTransaction {
+            db.expenseDao().insertExpense(expense)
+            db.ledgerDao().insertLedgerEntries(
+                listOf(
+                    LedgerEntry(
+                        id = UUID.randomUUID().toString(),
+                        accountHead = "${expense.category} Expense Account",
+                        voucherId = expense.id,
+                        date = expense.date,
+                        debit = expense.amount,
+                        credit = 0.0,
+                        narration = expense.description.ifBlank { "Expense entry" },
+                        financialYearCode = expense.fyLabel
+                    ),
+                    LedgerEntry(
+                        id = UUID.randomUUID().toString(),
+                        accountHead = if (expense.paymentMode == "CASH") "Cash" else "Bank",
+                        voucherId = expense.id,
+                        date = expense.date,
+                        debit = 0.0,
+                        credit = expense.amount,
+                        narration = expense.description.ifBlank { "Expense payment" },
+                        financialYearCode = expense.fyLabel
+                    )
+                )
+            )
+            db.bankCashDao().insertTransaction(
+                BankCashTransaction(
+                    id = UUID.randomUUID().toString(),
+                    type = "PAYMENT",
+                    mode = expense.paymentMode,
+                    amount = expense.amount,
+                    date = expense.date,
+                    partyId = null,
+                    partyName = null,
+                    narration = "Expense ${expense.category}: ${expense.description} [${expense.id}]",
+                    chequeNo = null,
+                    chequeDate = null,
+                    bankName = null,
+                    receiptImagePath = expense.attachmentPath.ifBlank { null },
+                    financialYearCode = expense.fyLabel
+                )
+            )
+        }
+    }
+
+    suspend fun deleteExpense(id: String) {
+        db.withTransaction {
+            db.expenseDao().deleteExpense(id)
+            db.ledgerDao().deleteLedgerEntriesForVoucher(id)
+            db.bankCashDao().deleteTransactionsByVoucher(id)
+        }
     }
 
     // Helpers
@@ -360,6 +430,8 @@ class AppRepository(private val db: AppDatabase) {
             "PAYMENT" -> "PMT"
             "DEBIT_NOTE" -> "DBN"
             "CREDIT_NOTE" -> "CRN"
+            "QUOTATION" -> "QUO"
+            "DELIVERY_CHALLAN" -> "DC"
             else -> "VCH"
         }
         val pattern = "$prefix/$fy/%"
@@ -415,8 +487,10 @@ class AppRepository(private val db: AppDatabase) {
             // 3. Auto-generate Ledger entries
             val ledgerList = mutableListOf<LedgerEntry>()
             val partyDesc = partyName ?: "Cash/Bank Account"
+            val shouldPostAccounts = resolvedVoucher.status == "POSTED" &&
+                resolvedVoucher.type !in setOf("QUOTATION", "DELIVERY_CHALLAN")
 
-            when (resolvedVoucher.type) {
+            if (shouldPostAccounts) when (resolvedVoucher.type) {
                 "SALE" -> {
                     if (resolvedVoucher.paymentMode == "PART PAYMENT") {
                         val paidHead = if (extras.partialPaymentSubmode == "CASH") "Cash" else "Bank"
@@ -899,7 +973,7 @@ class AppRepository(private val db: AppDatabase) {
                 }
             }
 
-            if (ledgerList.isNotEmpty()) {
+            if (shouldPostAccounts && ledgerList.isNotEmpty()) {
                 db.ledgerDao().insertLedgerEntries(
                     ledgerList.map { it.copy(financialYearCode = resolvedFinancialYearCode) }
                 )
@@ -911,7 +985,7 @@ class AppRepository(private val db: AppDatabase) {
             val isReceipt = (resolvedVoucher.type == "RECEIPT" || resolvedVoucher.type == "SALE" || resolvedVoucher.type == "PURCHASE_RETURN")
             val isPayment = (resolvedVoucher.type == "PAYMENT" || resolvedVoucher.type == "SALE_RETURN")
             
-            if ((isReceipt || isPayment) && resolvedVoucher.paymentMode != "CREDIT") {
+            if (shouldPostAccounts && (isReceipt || isPayment) && resolvedVoucher.paymentMode != "CREDIT") {
                 val txType = if (isReceipt) "RECEIPT" else "PAYMENT"
                 val transactionMode = if (resolvedVoucher.paymentMode == "PART PAYMENT") extras.partialPaymentSubmode else resolvedVoucher.paymentMode
                 val transactionAmount = if (resolvedVoucher.paymentMode == "PART PAYMENT") extras.partialAmountPaid else resolvedVoucher.netAmount
@@ -938,7 +1012,7 @@ class AppRepository(private val db: AppDatabase) {
             }
 
             // 5. Auto-register Credit Sale under BillReceivable
-            if (resolvedVoucher.type == "SALE" && (resolvedVoucher.paymentMode == "CREDIT" || resolvedVoucher.paymentMode == "PART PAYMENT") && resolvedVoucher.partyId != null) {
+            if (shouldPostAccounts && resolvedVoucher.type == "SALE" && (resolvedVoucher.paymentMode == "CREDIT" || resolvedVoucher.paymentMode == "PART PAYMENT") && resolvedVoucher.partyId != null) {
                 val creditPeriodMs = 15L * 24L * 3600L * 1000L // 15 days credit term
                 val dueDateVal = extras.creditDueDate.takeIf { it.isNotBlank() }?.let(::parseCreditDueDateToMillis)
                     ?: (resolvedVoucher.date + creditPeriodMs)
@@ -965,6 +1039,8 @@ class AppRepository(private val db: AppDatabase) {
 
             // 6. Recalculate everything
             recalculateOutstandings()
+            recalculateProductStocks(resolvedFinancialYearCode)
+            updatePartyAnalytics(resolvedFinancialYearCode)
         }
     }
 
@@ -1041,6 +1117,7 @@ class AppRepository(private val db: AppDatabase) {
 
     suspend fun deleteVoucher(id: String) {
         db.withTransaction {
+            val voucher = db.voucherDao().getVoucherById(id)
             db.voucherDao().deleteVoucher(id)
             db.voucherItemDao().deleteItemsForVoucher(id)
             db.ledgerDao().deleteLedgerEntriesForVoucher(id)
@@ -1049,6 +1126,74 @@ class AppRepository(private val db: AppDatabase) {
             db.receiptAllocationDao().deleteAllocationsByInvoice(id)
             db.billReceivableDao().deleteBillByVoucherId(id)
             recalculateOutstandings()
+            voucher?.financialYearCode?.let {
+                recalculateProductStocks(it)
+                updatePartyAnalytics(it)
+            }
+        }
+    }
+
+    private suspend fun recalculateProductStocks(financialYearCode: String) {
+        val products = db.productDao().getAllProductsSync()
+        val vouchersById = db.voucherDao().getAllVouchersForYearSync(financialYearCode).associateBy { it.id }
+        val openingBalances = db.productFinancialYearBalanceDao()
+            .getBalancesForYearSync(financialYearCode)
+            .associateBy { it.productId }
+        val movements = db.voucherItemDao().getAllItemsForYearSync(financialYearCode)
+            .groupBy { it.productId }
+            .mapValues { (_, productItems) ->
+                productItems.sumOf { item ->
+                    when (vouchersById[item.voucherId]?.type) {
+                        "PURCHASE", "SALE_RETURN" -> item.qty
+                        "SALE", "PURCHASE_RETURN" -> -item.qty
+                        else -> 0.0
+                    }
+                }
+            }
+
+        products.forEach { product ->
+            val openingStock = openingBalances[product.id]?.openingStock ?: product.openingStock
+            val currentStock = (openingStock + (movements[product.id] ?: 0.0)).coerceAtLeast(0.0)
+            db.openHelper.writableDatabase.execSQL(
+                """
+                UPDATE products
+                SET current_stock = ?,
+                    stock_unit = ?
+                WHERE id = ?
+                """.trimIndent(),
+                arrayOf(currentStock, product.stockUnit.ifBlank { product.unit }, product.id)
+            )
+        }
+    }
+
+    private suspend fun updatePartyAnalytics(financialYearCode: String) {
+        val formatter = SimpleDateFormat("dd-MMM-yyyy", Locale.ENGLISH)
+        val saleVouchersByParty = db.voucherDao().getAllVouchersForYearSync(financialYearCode)
+            .filter { it.type == "SALE" && it.partyId != null }
+            .groupBy { it.partyId.orEmpty() }
+
+        db.partyDao().getAllPartiesSync().forEach { party ->
+            val partySales = saleVouchersByParty[party.id].orEmpty().sortedBy { it.date }
+            val totalPurchasesAmount = partySales.sumOf { it.netAmount }
+            db.openHelper.writableDatabase.execSQL(
+                """
+                UPDATE parties
+                SET total_purchases_amount = ?,
+                    total_transactions = ?,
+                    first_transaction_date = ?,
+                    last_transaction_date = ?,
+                    loyalty_points = ?
+                WHERE id = ?
+                """.trimIndent(),
+                arrayOf(
+                    totalPurchasesAmount,
+                    partySales.size,
+                    partySales.firstOrNull()?.let { formatter.format(it.date) }.orEmpty(),
+                    partySales.lastOrNull()?.let { formatter.format(it.date) }.orEmpty(),
+                    (totalPurchasesAmount / 100.0).toInt(),
+                    party.id
+                )
+            )
         }
     }
 

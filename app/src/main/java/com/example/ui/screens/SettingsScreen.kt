@@ -691,9 +691,9 @@ fun SettingsScreen(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Image(
-                    painter = painterResource(R.drawable.ic_launcher_symbol),
+                    painter = painterResource(R.drawable.zerobook_icon),
                     contentDescription = "ZeroBook",
-                    modifier = Modifier.size(80.dp),
+                    modifier = Modifier.size(72.dp),
                     contentScale = ContentScale.Fit
                 )
                 Text(

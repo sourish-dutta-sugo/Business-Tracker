@@ -109,14 +109,14 @@ fun SetupScreen(
                 title = { 
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Image(
-                            painter = painterResource(R.drawable.ic_launcher_symbol),
+                            painter = painterResource(R.drawable.zerobook_icon),
                             contentDescription = "ZeroBook",
-                            modifier = Modifier.size(28.dp),
+                            modifier = Modifier.size(32.dp),
                             contentScale = ContentScale.Fit
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "ZeroBook Setup", 
+                            text = "ZeroBook Setup",
                             fontWeight = FontWeight.Bold,
                             fontSize = 20.sp,
                             color = AppColors.textPrimary
@@ -148,23 +148,23 @@ fun SetupScreen(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Image(
-                        painter = painterResource(R.drawable.ic_launcher_symbol),
+                        painter = painterResource(R.drawable.zerobook_icon),
                         contentDescription = "ZeroBook",
                         modifier = Modifier
-                            .size(120.dp)
+                            .size(80.dp)
                             .padding(bottom = 8.dp),
                         contentScale = ContentScale.Fit
                     )
                     Text(
                         text = "ZeroBook",
-                        fontSize = 24.sp,
+                        fontSize = 22.sp,
                         fontWeight = FontWeight.Bold,
                         color = AppColors.textPrimary
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = "Record. Transact. Grow.",
-                        fontSize = 14.sp,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.Normal,
                         color = AppColors.textSecondary
                     )

@@ -39,6 +39,8 @@ import androidx.compose.material.icons.outlined.Send
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -85,7 +87,8 @@ fun InvoiceScreen(
     viewModel: AppViewModel,
     voucherId: String,
     onNavigateBack: () -> Unit,
-    onEditVoucher: (String) -> Unit
+    onEditVoucher: (String) -> Unit,
+    onCreateSaleFromVoucher: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -325,6 +328,22 @@ fun InvoiceScreen(
                             label = "Close",
                             enabled = !isWorking,
                             onClick = onNavigateBack
+                        )
+                    }
+                }
+                if (bundle.document.voucher.type == "QUOTATION" || bundle.document.voucher.type == "DELIVERY_CHALLAN") {
+                    Button(
+                        onClick = { onCreateSaleFromVoucher(voucherId) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                            .height(48.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = AppColors.primary)
+                    ) {
+                        Text(
+                            if (bundle.document.voucher.type == "QUOTATION") "Convert to Invoice" else "Convert Challan to Invoice",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 }

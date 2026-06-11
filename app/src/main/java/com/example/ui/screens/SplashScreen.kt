@@ -30,7 +30,7 @@ fun SplashScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFFDF6EC)),
+            .background(Color(0xFF0D1B2A)),
         contentAlignment = Alignment.Center
     ) {
         Column(
@@ -39,29 +39,28 @@ fun SplashScreen(
             modifier = Modifier.padding(24.dp)
         ) {
             Image(
-                painter = painterResource(R.drawable.ic_launcher_symbol),
+                painter = painterResource(R.drawable.zerobook_icon),
                 contentDescription = "ZeroBook",
-                modifier = Modifier.size(180.dp),
+                modifier = Modifier.size(120.dp),
                 contentScale = ContentScale.Fit
             )
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
             Text(
                 text = "ZeroBook",
-                color = Color(0xFF1A1A1A),
-                fontSize = 28.sp,
+                color = Color.White,
+                fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
-                letterSpacing = 1.sp,
                 textAlign = TextAlign.Center
             )
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             Text(
                 text = "Record. Transact. Grow.",
-                color = Color(0xFF1E8A3C),
-                fontSize = 14.sp,
+                color = Color(0xFFD1D5DB),
+                fontSize = 13.sp,
                 fontWeight = FontWeight.Medium,
                 textAlign = TextAlign.Center
             )
