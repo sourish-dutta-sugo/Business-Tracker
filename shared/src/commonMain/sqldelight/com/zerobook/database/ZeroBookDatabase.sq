@@ -1,0 +1,220 @@
+CREATE TABLE business_profile (
+    id INTEGER NOT NULL PRIMARY KEY DEFAULT 1,
+    business_name TEXT NOT NULL DEFAULT '',
+    owner_name TEXT NOT NULL DEFAULT '',
+    address TEXT NOT NULL DEFAULT '',
+    city TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL DEFAULT '',
+    pin TEXT NOT NULL DEFAULT '',
+    state_code TEXT NOT NULL DEFAULT '',
+    phone TEXT NOT NULL DEFAULT '',
+    email TEXT NOT NULL DEFAULT '',
+    gstin TEXT NOT NULL DEFAULT '',
+    pan TEXT NOT NULL DEFAULT '',
+    bank_name TEXT NOT NULL DEFAULT '',
+    account_no TEXT NOT NULL DEFAULT '',
+    ifsc TEXT NOT NULL DEFAULT '',
+    bank_branch TEXT NOT NULL DEFAULT '',
+    upi_id TEXT NOT NULL DEFAULT '',
+    logo_path TEXT,
+    signature_path TEXT,
+    terms_and_conditions TEXT NOT NULL DEFAULT '',
+    fy_label TEXT NOT NULL DEFAULT '',
+    smtp_email TEXT NOT NULL DEFAULT '',
+    smtp_password TEXT NOT NULL DEFAULT '',
+    smtp_host TEXT NOT NULL DEFAULT 'smtp.gmail.com',
+    smtp_port TEXT NOT NULL DEFAULT '587',
+    created_at INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE parties (
+    id TEXT NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'CUSTOMER',
+    phone TEXT NOT NULL DEFAULT '',
+    email TEXT NOT NULL DEFAULT '',
+    address TEXT NOT NULL DEFAULT '',
+    city TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL DEFAULT '',
+    state_code TEXT NOT NULL DEFAULT '',
+    gstin TEXT NOT NULL DEFAULT '',
+    pan TEXT NOT NULL DEFAULT '',
+    opening_balance REAL NOT NULL DEFAULT 0,
+    balance_type TEXT NOT NULL DEFAULT 'DR',
+    credit_limit REAL NOT NULL DEFAULT 0,
+    credit_days INTEGER NOT NULL DEFAULT 0,
+    notes TEXT NOT NULL DEFAULT '',
+    total_purchases_amount REAL NOT NULL DEFAULT 0,
+    total_transactions INTEGER NOT NULL DEFAULT 0,
+    birthday TEXT NOT NULL DEFAULT '',
+    loyalty_points INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE products (
+    id TEXT NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    hsn_code TEXT NOT NULL DEFAULT '',
+    unit TEXT NOT NULL DEFAULT 'PCS',
+    sale_rate REAL NOT NULL DEFAULT 0,
+    purchase_rate REAL NOT NULL DEFAULT 0,
+    gst_rate REAL NOT NULL DEFAULT 0,
+    opening_stock REAL NOT NULL DEFAULT 0,
+    current_stock REAL NOT NULL DEFAULT 0,
+    low_stock_threshold REAL NOT NULL DEFAULT 5,
+    enable_stock_alert INTEGER NOT NULL DEFAULT 0,
+    barcode_value TEXT NOT NULL DEFAULT '',
+    secondary_unit TEXT NOT NULL DEFAULT '',
+    conversion_factor REAL NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE vouchers (
+    id TEXT NOT NULL PRIMARY KEY,
+    voucher_no TEXT NOT NULL,
+    type TEXT NOT NULL,
+    date TEXT NOT NULL,
+    party_id TEXT NOT NULL DEFAULT '',
+    party_name TEXT NOT NULL DEFAULT '',
+    narration TEXT NOT NULL DEFAULT '',
+    reference_no TEXT NOT NULL DEFAULT '',
+    other_references TEXT NOT NULL DEFAULT '',
+    buyer_order_no TEXT NOT NULL DEFAULT '',
+    terms_of_delivery TEXT NOT NULL DEFAULT '',
+    taxable_amount REAL NOT NULL DEFAULT 0,
+    cgst REAL NOT NULL DEFAULT 0,
+    sgst REAL NOT NULL DEFAULT 0,
+    igst REAL NOT NULL DEFAULT 0,
+    round_off REAL NOT NULL DEFAULT 0,
+    net_amount REAL NOT NULL DEFAULT 0,
+    payment_mode TEXT NOT NULL DEFAULT 'CASH',
+    partial_amount_paid REAL NOT NULL DEFAULT 0,
+    partial_payment_submode TEXT NOT NULL DEFAULT '',
+    credit_due_date TEXT NOT NULL DEFAULT '',
+    remaining_credit_amount REAL NOT NULL DEFAULT 0,
+    cheque_no TEXT NOT NULL DEFAULT '',
+    cheque_date TEXT NOT NULL DEFAULT '',
+    bank_name TEXT NOT NULL DEFAULT '',
+    transport_name TEXT NOT NULL DEFAULT '',
+    transport_vehicle TEXT NOT NULL DEFAULT '',
+    transport_lr_no TEXT NOT NULL DEFAULT '',
+    transport_gstin TEXT NOT NULL DEFAULT '',
+    transport_destination TEXT NOT NULL DEFAULT '',
+    is_igst INTEGER NOT NULL DEFAULT 0,
+    is_advance INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'DRAFT',
+    fy_label TEXT NOT NULL DEFAULT '',
+    attachment_path TEXT NOT NULL DEFAULT '',
+    additional_charges_json TEXT NOT NULL DEFAULT '[]',
+    created_at INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE voucher_items (
+    id TEXT NOT NULL PRIMARY KEY,
+    voucher_id TEXT NOT NULL,
+    product_id TEXT NOT NULL DEFAULT '',
+    product_name TEXT NOT NULL,
+    hsn_code TEXT NOT NULL DEFAULT '',
+    qty REAL NOT NULL DEFAULT 1,
+    unit TEXT NOT NULL DEFAULT 'PCS',
+    rate REAL NOT NULL DEFAULT 0,
+    discount REAL NOT NULL DEFAULT 0,
+    discount_type TEXT NOT NULL DEFAULT 'PERCENT',
+    taxable_amount REAL NOT NULL DEFAULT 0,
+    gst_rate REAL NOT NULL DEFAULT 0,
+    cgst_amount REAL NOT NULL DEFAULT 0,
+    sgst_amount REAL NOT NULL DEFAULT 0,
+    igst_amount REAL NOT NULL DEFAULT 0,
+    total_amount REAL NOT NULL DEFAULT 0
+);
+
+CREATE TABLE ledger_entries (
+    id TEXT NOT NULL PRIMARY KEY,
+    account_head TEXT NOT NULL,
+    account_group TEXT NOT NULL DEFAULT '',
+    voucher_id TEXT NOT NULL DEFAULT '',
+    voucher_no TEXT NOT NULL DEFAULT '',
+    date TEXT NOT NULL,
+    debit REAL NOT NULL DEFAULT 0,
+    credit REAL NOT NULL DEFAULT 0,
+    narration TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE ledger_accounts (
+    id TEXT NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    group_name TEXT NOT NULL,
+    opening_balance REAL NOT NULL DEFAULT 0,
+    balance_type TEXT NOT NULL DEFAULT 'DR',
+    is_system INTEGER NOT NULL DEFAULT 0,
+    is_party INTEGER NOT NULL DEFAULT 0,
+    party_id TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE expenses (
+    id TEXT NOT NULL PRIMARY KEY,
+    date TEXT NOT NULL,
+    category TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    amount REAL NOT NULL,
+    payment_mode TEXT NOT NULL DEFAULT 'CASH',
+    reference_no TEXT NOT NULL DEFAULT '',
+    attachment_path TEXT NOT NULL DEFAULT '',
+    voucher_no TEXT NOT NULL DEFAULT '',
+    fy_label TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL DEFAULT 0
+);
+
+getBusinessProfile:
+SELECT * FROM business_profile WHERE id = 1;
+
+getAllParties:
+SELECT * FROM parties ORDER BY name ASC;
+
+getPartyById:
+SELECT * FROM parties WHERE id = ?;
+
+upsertParty:
+INSERT OR REPLACE INTO parties(
+    id, name, type, phone, email, address, city, state, state_code, gstin, pan,
+    opening_balance, balance_type, credit_limit, credit_days, notes, total_purchases_amount,
+    total_transactions, birthday, loyalty_points, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+getAllProducts:
+SELECT * FROM products ORDER BY name ASC;
+
+getProductById:
+SELECT * FROM products WHERE id = ?;
+
+upsertProduct:
+INSERT OR REPLACE INTO products(
+    id, name, hsn_code, unit, sale_rate, purchase_rate, gst_rate, opening_stock,
+    current_stock, low_stock_threshold, enable_stock_alert, barcode_value,
+    secondary_unit, conversion_factor, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+getAllVouchers:
+SELECT * FROM vouchers ORDER BY date DESC, created_at DESC;
+
+getVouchersByType:
+SELECT * FROM vouchers WHERE type = ? ORDER BY date DESC, created_at DESC;
+
+getVoucherById:
+SELECT * FROM vouchers WHERE id = ?;
+
+getItemsForVoucher:
+SELECT * FROM voucher_items WHERE voucher_id = ?;
+
+insertVoucher:
+INSERT OR REPLACE INTO vouchers(
+    id, voucher_no, type, date, party_id, party_name, narration, reference_no,
+    other_references, buyer_order_no, terms_of_delivery, taxable_amount, cgst,
+    sgst, igst, round_off, net_amount, payment_mode, partial_amount_paid,
+    partial_payment_submode, credit_due_date, remaining_credit_amount, cheque_no,
+    cheque_date, bank_name, transport_name, transport_vehicle, transport_lr_no,
+    transport_gstin, transport_destination, is_igst, is_advance, status, fy_label,
+    attachment_path, additional_charges_json, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);

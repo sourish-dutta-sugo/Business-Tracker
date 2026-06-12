@@ -17,12 +17,12 @@ dependencies {
 
 compose.desktop {
     application {
-        mainClass = "com.vibecoding.zerobookmultiplatform.MainKt"
+        mainClass = "com.zerobook.MainKt"
 
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
-            packageName = "com.vibecoding.zerobookmultiplatform"
-            packageVersion = "1.0.0"
+            packageName = "ZeroBook"
+            packageVersion = "3.0.0"
         }
     }
 }

@@ -1,0 +1,17 @@
+{
+  "version": "3.0.0",
+  "show_once": true,
+  "changes": [
+    "NEW: Desktop app for Windows, Mac, Linux",
+    "NEW: Web app runs in any browser",
+    "NEW: Navigation rail on desktop",
+    "NEW: Keyboard shortcuts Alt+1 to Alt+6",
+    "NEW: Alt+S new sale, Alt+P purchase",
+    "NEW: All features work on all platforms",
+    "IMPROVED: Same UI on phone and desktop",
+    "IMPROVED: Faster build time under 3 minutes",
+    "IMPROVED: Beach theme on all platforms",
+    "FIXED: Zero build errors across all targets",
+    "FIXED: No warnings in build output"
+  ]
+}
