@@ -7,3 +7,11 @@ config.plugins.push(
     ],
   }),
 );
+
+config.ignoreWarnings = [/.*/];
+config.performance = {
+  hints: false,
+};
+config.stats = {
+  warnings: false,
+};
