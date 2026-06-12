@@ -311,7 +311,7 @@ class AppRepository(private val db: AppDatabase) {
                     address = ?
                 WHERE partyId = ?
                 """.trimIndent(),
-                arrayOf(
+                arrayOf<Any?>(
                     party.name,
                     party.openingBalance,
                     party.balanceType,
@@ -432,6 +432,7 @@ class AppRepository(private val db: AppDatabase) {
             "CREDIT_NOTE" -> "CRN"
             "QUOTATION" -> "QUO"
             "DELIVERY_CHALLAN" -> "DC"
+            "JOURNAL" -> "JNL"
             else -> "VCH"
         }
         val pattern = "$prefix/$fy/%"
@@ -1087,7 +1088,7 @@ class AppRepository(private val db: AppDatabase) {
                 saveVoucherExtras(v.id, v.paymentMode, voucherExtras)
                 db.openHelper.writableDatabase.execSQL(
                     "UPDATE vouchers SET remaining_credit_amount = ? WHERE id = ?",
-                    arrayOf(outstanding, bill.voucherId)
+                    arrayOf<Any?>(outstanding, bill.voucherId)
                 )
             }
         }
@@ -1133,6 +1134,42 @@ class AppRepository(private val db: AppDatabase) {
         }
     }
 
+    suspend fun saveJournalVoucher(
+        voucher: Voucher,
+        lines: List<JournalLine>
+    ) {
+        db.withTransaction {
+            val resolvedFinancialYearCode = voucher.financialYearCode.ifBlank { getFinancialYear(voucher.date) }
+            ensureFinancialYearExists(resolvedFinancialYearCode)
+            val yearState = db.financialYearDao().getFinancialYearByCode(resolvedFinancialYearCode)
+            require(yearState?.isLocked != true) { "Financial year $resolvedFinancialYearCode is locked." }
+
+            db.voucherDao().deleteVoucher(voucher.id)
+            db.voucherItemDao().deleteItemsForVoucher(voucher.id)
+            db.ledgerDao().deleteLedgerEntriesForVoucher(voucher.id)
+            db.bankCashDao().deleteTransactionsByVoucher(voucher.id)
+
+            db.voucherDao().insertVoucher(voucher.copy(type = "JOURNAL", financialYearCode = resolvedFinancialYearCode))
+            db.ledgerDao().insertLedgerEntries(
+                lines.flatMap { line ->
+                    listOf(
+                        LedgerEntry(
+                            id = UUID.randomUUID().toString(),
+                            accountHead = line.accountHead,
+                            voucherId = voucher.id,
+                            date = voucher.date,
+                            debit = line.debit,
+                            credit = line.credit,
+                            narration = voucher.narration.ifBlank { "Journal Entry ${voucher.voucherNo}" },
+                            financialYearCode = resolvedFinancialYearCode,
+                            createdAt = System.currentTimeMillis()
+                        )
+                    )
+                }
+            )
+        }
+    }
+
     private suspend fun recalculateProductStocks(financialYearCode: String) {
         val products = db.productDao().getAllProductsSync()
         val vouchersById = db.voucherDao().getAllVouchersForYearSync(financialYearCode).associateBy { it.id }
@@ -1161,7 +1198,7 @@ class AppRepository(private val db: AppDatabase) {
                     stock_unit = ?
                 WHERE id = ?
                 """.trimIndent(),
-                arrayOf(currentStock, product.stockUnit.ifBlank { product.unit }, product.id)
+                arrayOf<Any?>(currentStock, product.stockUnit.ifBlank { product.unit }, product.id)
             )
         }
     }
@@ -1185,7 +1222,7 @@ class AppRepository(private val db: AppDatabase) {
                     loyalty_points = ?
                 WHERE id = ?
                 """.trimIndent(),
-                arrayOf(
+                arrayOf<Any?>(
                     totalPurchasesAmount,
                     partySales.size,
                     partySales.firstOrNull()?.let { formatter.format(it.date) }.orEmpty(),
@@ -1212,7 +1249,7 @@ class AppRepository(private val db: AppDatabase) {
                 other_references = ?
             WHERE id = ?
             """.trimIndent(),
-            arrayOf(
+            arrayOf<Any?>(
                 paymentMode,
                 extras.partialAmountPaid,
                 extras.partialPaymentSubmode,

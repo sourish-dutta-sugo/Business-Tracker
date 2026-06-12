@@ -123,6 +123,7 @@ fun ensureProductExtensionColumns(db: SupportSQLiteDatabase) {
     }
 
     ensureColumn("current_stock", "ALTER TABLE products ADD COLUMN current_stock REAL NOT NULL DEFAULT 0")
+    ensureColumn("enable_stock_alert", "ALTER TABLE products ADD COLUMN IF NOT EXISTS enable_stock_alert INTEGER NOT NULL DEFAULT 0")
     ensureColumn("low_stock_threshold", "ALTER TABLE products ADD COLUMN low_stock_threshold REAL NOT NULL DEFAULT 5")
     ensureColumn("stock_unit", "ALTER TABLE products ADD COLUMN stock_unit TEXT NOT NULL DEFAULT 'PCS'")
     ensureColumn("barcode_value", "ALTER TABLE products ADD COLUMN barcode_value TEXT NOT NULL DEFAULT ''")
@@ -542,6 +543,18 @@ val MIGRATION_10_11 = object : Migration(10, 11) {
 }
 
 val MIGRATION_11_12 = object : Migration(11, 12) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        ensureVoucherExtensionColumns(db)
+        ensureBusinessProfileExtensionColumns(db)
+        ensurePartyExtensionColumns(db)
+        ensureProductExtensionColumns(db)
+        ensureFinancialYearColumnsAndIndexes(db)
+        ensureReminderScheduleTable(db)
+        ensureExpenseTable(db)
+    }
+}
+
+val MIGRATION_12_13 = object : Migration(12, 13) {
     override fun migrate(db: SupportSQLiteDatabase) {
         ensureVoucherExtensionColumns(db)
         ensureBusinessProfileExtensionColumns(db)

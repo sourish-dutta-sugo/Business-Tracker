@@ -7,6 +7,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.heightIn
@@ -15,7 +20,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Assignment
+import androidx.compose.material.icons.automirrored.filled.Assignment
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Settings
@@ -83,6 +88,7 @@ class MainActivity : ComponentActivity() {
                 WindowInsetsControllerCompat(window, window.decorView)
             }
 
+            @Suppress("DEPRECATION")
             SideEffect {
                 window.statusBarColor = currentTheme.statusBarColor.toArgb()
                 windowInsetsController.isAppearanceLightStatusBars = currentTheme.statusBarDarkIcons
@@ -184,16 +190,27 @@ fun MainAppEntry(
             } else {
                 // Persistent Navigation stack
                 val backstack = remember { mutableStateListOf<Screen>() }
+                var isNavigatingBack by remember { mutableStateOf(false) }
 
                 // Screen navigation helpers
                 fun navigateTo(screen: Screen) {
+                    isNavigatingBack = false
                     backstack.add(screen)
                 }
 
                 fun navigateBack() {
                     if (backstack.isNotEmpty()) {
+                        isNavigatingBack = true
                         backstack.removeAt(backstack.size - 1)
                     }
+                }
+
+                fun navigateToInvoiceAfterVoucherSave(voucherId: String) {
+                    isNavigatingBack = false
+                    if (backstack.lastOrNull() is Screen.NewVoucher) {
+                        backstack.removeAt(backstack.lastIndex)
+                    }
+                    backstack.add(Screen.Invoice(voucherId))
                 }
 
                 // Handle Android software/hardware back gestures and buttons gracefully
@@ -280,7 +297,7 @@ fun MainAppEntry(
                                             backstack.clear()
                                             navigateTo(Screen.Vouchers)
                                         },
-                                        icon = { Icon(imageVector = Icons.Default.Assignment, contentDescription = "Vouchers") },
+                                        icon = { Icon(imageVector = Icons.AutoMirrored.Filled.Assignment, contentDescription = "Vouchers") },
                                         label = { Text("Vouchers", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
                                         colors = NavigationBarItemDefaults.colors(
                                             selectedIconColor = AppColors.primary,
@@ -333,8 +350,30 @@ fun MainAppEntry(
                                 .fillMaxSize()
                                 .padding(innerPadding)
                         ) {
-                            // Route current renderer using animated transitions
-                            when (currentScreen) {
+                            AnimatedContent(
+                                targetState = currentScreen,
+                                transitionSpec = {
+                                    if (isNavigatingBack) {
+                                        slideInHorizontally(
+                                            initialOffsetX = { -it / 4 },
+                                            animationSpec = tween(300)
+                                        ) togetherWith slideOutHorizontally(
+                                            targetOffsetX = { it },
+                                            animationSpec = tween(300)
+                                        )
+                                    } else {
+                                        slideInHorizontally(
+                                            initialOffsetX = { it },
+                                            animationSpec = tween(300)
+                                        ) togetherWith slideOutHorizontally(
+                                            targetOffsetX = { -it / 4 },
+                                            animationSpec = tween(300)
+                                        )
+                                    }
+                                },
+                                label = "main_screen_navigation"
+                            ) { animatedScreen ->
+                            when (animatedScreen) {
                                 is Screen.Setup -> {
                                     SetupScreen(
                                         viewModel = viewModel,
@@ -435,21 +474,20 @@ fun MainAppEntry(
                                 }
 
                                 is Screen.NewVoucher -> {
-                                    val vId = (currentScreen as Screen.NewVoucher).voucherId
                                     NewVoucherScreen(
                                         viewModel = viewModel,
-                                        voucherId = vId,
+                                        voucherId = animatedScreen.voucherId,
                                         isDesktop = false,
                                         onNavigateBack = { navigateBack() },
-                                        onNavigateToInvoice = { id -> navigateTo(Screen.Invoice(id)) }
+                                        onNavigateToInvoice = { id -> navigateToInvoiceAfterVoucherSave(id) },
+                                        onNavigateToPartyDetail = { id -> navigateTo(Screen.PartyDetail(id)) }
                                     )
                                 }
 
                                 is Screen.Invoice -> {
-                                    val vId = (currentScreen as Screen.Invoice).voucherId
                                     InvoiceScreen(
                                         viewModel = viewModel,
-                                        voucherId = vId,
+                                        voucherId = animatedScreen.voucherId,
                                         onNavigateBack = { navigateBack() },
                                         onEditVoucher = { id -> navigateTo(Screen.NewVoucher(id)) },
                                         onCreateSaleFromVoucher = { sourceVoucherId ->
@@ -476,13 +514,13 @@ fun MainAppEntry(
                                 }
 
                                 is Screen.PartyDetail -> {
-                                    val pId = (currentScreen as Screen.PartyDetail).partyId
                                     PartyDetailScreen(
                                         viewModel = viewModel,
-                                        partyId = pId,
+                                        partyId = animatedScreen.partyId,
                                         onNavigateBack = { navigateBack() }
                                     )
                                 }
+                            }
                             }
                         }
                     }

@@ -2,10 +2,11 @@ package com.example.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -21,11 +22,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
@@ -37,21 +41,23 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
@@ -66,9 +72,58 @@ import com.example.data.Utils
 import com.example.data.filterDecimalInput
 import com.example.ui.AppViewModel
 import com.example.ui.theme.AppColors
-import com.example.ui.theme.Colors
+import com.example.utils.HsnEntry
 import com.example.utils.HsnLookup
 import java.util.UUID
+
+enum class ProductSheetMode { ADD, EDIT }
+
+private data class ProductEditorState(
+    val id: String? = null,
+    val name: String = "",
+    val hsnCode: String = "",
+    val unit: String = "PCS",
+    val saleRate: String = "",
+    val purchaseRate: String = "",
+    val gstRate: Double = 18.0,
+    val openingStock: String = "0",
+    val currentStock: String = "0",
+    val lowStockThreshold: String = "5",
+    val enableStockAlert: Boolean = false,
+    val barcodeValue: String = "",
+    val secondaryUnit: String = "",
+    val conversionFactor: String = "1",
+    val batchEnabled: Boolean = false,
+    val batchNumber: String = "",
+    val expiryEnabled: Boolean = false,
+    val expiryDate: String = "",
+    val serialEnabled: Boolean = false
+)
+
+private fun Product.toEditorState() = ProductEditorState(
+    id = id,
+    name = name,
+    hsnCode = hsnCode,
+    unit = unit,
+    saleRate = saleRate.toString(),
+    purchaseRate = purchaseRate.toString(),
+    gstRate = gstRate,
+    openingStock = openingStock.toString(),
+    currentStock = currentStock.toString(),
+    lowStockThreshold = lowStockThreshold.toString(),
+    enableStockAlert = enableStockAlert,
+    barcodeValue = barcodeValue,
+    secondaryUnit = secondaryUnit,
+    conversionFactor = conversionFactor.toString(),
+    batchEnabled = batchEnabled,
+    batchNumber = batchNumber,
+    expiryEnabled = expiryEnabled,
+    expiryDate = expiryDate,
+    serialEnabled = serialEnabled
+)
+
+private fun Product.isLowStockAlertTriggered(): Boolean =
+    enableStockAlert && currentStock <= lowStockThreshold
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -78,7 +133,10 @@ fun ProductsScreen(
 ) {
     val products by viewModel.products.collectAsState()
     var searchQuery by remember { mutableStateOf("") }
-    var showAddForm by remember { mutableStateOf(false) }
+    var sheetMode by remember { mutableStateOf<ProductSheetMode?>(null) }
+    var editingProductId by remember { mutableStateOf<String?>(null) }
+    var selectedProduct by remember { mutableStateOf<Product?>(null) }
+    var actionProduct by remember { mutableStateOf<Product?>(null) }
 
     val filteredProducts = remember(products, searchQuery) {
         products.filter { product ->
@@ -88,8 +146,20 @@ fun ProductsScreen(
         }
     }
 
-    if (showAddForm) {
-        AddProductForm(viewModel = viewModel, onDismiss = { showAddForm = false })
+    val lowStockCount = remember(filteredProducts) {
+        filteredProducts.count { it.isLowStockAlertTriggered() }
+    }
+
+    if (sheetMode != null) {
+        ProductEditorScreen(
+            viewModel = viewModel,
+            mode = sheetMode ?: ProductSheetMode.ADD,
+            existingProduct = products.find { it.id == editingProductId },
+            onDismiss = {
+                sheetMode = null
+                editingProductId = null
+            }
+        )
         return
     }
 
@@ -101,15 +171,18 @@ fun ProductsScreen(
                 title = { Text("Manage Products", fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = AppColors.cardBg)
             )
         },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = { showAddForm = true },
+            androidx.compose.material3.FloatingActionButton(
+                onClick = {
+                    editingProductId = null
+                    sheetMode = ProductSheetMode.ADD
+                },
                 containerColor = AppColors.primary,
                 contentColor = AppColors.textOnPrimary,
                 modifier = Modifier.testTag("add_product_fab")
@@ -118,9 +191,6 @@ fun ProductsScreen(
             }
         }
     ) { innerPadding ->
-        val lowStockCount = filteredProducts.count { product ->
-            product.currentStock <= 0.0 || product.currentStock <= product.lowStockThreshold
-        }
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -162,34 +232,133 @@ fun ProductsScreen(
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 120.dp)
+                    contentPadding = PaddingValues(bottom = 120.dp)
                 ) {
-                    items(items = filteredProducts, key = { product -> product.id }) { product ->
-                        ProductRow(product = product)
+                    items(items = filteredProducts, key = { it.id }) { product ->
+                        ProductRow(
+                            product = product,
+                            onOpenDetail = { selectedProduct = product },
+                            onEdit = {
+                                editingProductId = product.id
+                                sheetMode = ProductSheetMode.EDIT
+                            },
+                            onDelete = { viewModel.deleteProduct(product.id) },
+                            onMore = { actionProduct = product }
+                        )
                     }
                 }
             }
         }
     }
+
+    selectedProduct?.let { product ->
+        AlertDialog(
+            onDismissRequest = { selectedProduct = null },
+            title = { Text(product.name, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("HSN: ${product.hsnCode.ifBlank { "N/A" }}")
+                    Text("Unit: ${product.unit}")
+                    Text("Sale Rate: ${Utils.formatIndianCurrency(product.saleRate)}")
+                    Text("Purchase Rate: ${Utils.formatIndianCurrency(product.purchaseRate)}")
+                    Text("GST: ${product.gstRate}%")
+                    Text("Opening Stock: ${product.openingStock}")
+                    Text("Current Stock: ${product.currentStock}")
+                    if (product.enableStockAlert) {
+                        Text("Low stock alert below ${product.lowStockThreshold}")
+                    } else {
+                        Text("Low stock alert disabled")
+                    }
+                    if (product.barcodeValue.isNotBlank()) {
+                        Text("Barcode: ${product.barcodeValue}")
+                    }
+                    if (product.secondaryUnit.isNotBlank()) {
+                        Text("Secondary Unit: ${product.secondaryUnit} (${product.conversionFactor} ${product.unit})")
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        selectedProduct = null
+                        editingProductId = product.id
+                        sheetMode = ProductSheetMode.EDIT
+                    }
+                ) {
+                    Text("Edit")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { selectedProduct = null }) {
+                    Text("Close")
+                }
+            }
+        )
+    }
+
+    actionProduct?.let { product ->
+        AlertDialog(
+            onDismissRequest = { actionProduct = null },
+            title = { Text(product.name) },
+            text = { Text("Choose an action for this product.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        actionProduct = null
+                        editingProductId = product.id
+                        sheetMode = ProductSheetMode.EDIT
+                    }
+                ) {
+                    Text("Edit")
+                }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(
+                        onClick = {
+                            viewModel.deleteProduct(product.id)
+                            actionProduct = null
+                        }
+                    ) {
+                        Text("Delete", color = AppColors.error)
+                    }
+                    TextButton(onClick = { actionProduct = null }) {
+                        Text("Cancel")
+                    }
+                }
+            }
+        )
+    }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun ProductRow(product: Product) {
+private fun ProductRow(
+    product: Product,
+    onOpenDetail: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onMore: () -> Unit
+) {
     val statusColor = when {
         product.currentStock <= 0.0 -> Color(0xFFC62828)
-        product.currentStock <= product.lowStockThreshold -> Color(0xFFEF6C00)
+        product.isLowStockAlertTriggered() -> Color(0xFFEF6C00)
         else -> Color(0xFF2E7D32)
     }
     val statusLabel = when {
         product.currentStock <= 0.0 -> "Out of Stock"
-        product.currentStock <= product.lowStockThreshold -> "Low Stock"
+        product.isLowStockAlertTriggered() -> "Low Stock"
         else -> "In Stock"
     }
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .border(0.5.dp, Color(0xFFE8E8E8), RoundedCornerShape(8.dp)),
+            .border(0.5.dp, Color(0xFFE8E8E8), RoundedCornerShape(8.dp))
+            .combinedClickable(
+                onClick = onOpenDetail,
+                onLongClick = onMore
+            ),
         colors = CardDefaults.cardColors(containerColor = AppColors.cardBg)
     ) {
         Row(
@@ -202,16 +371,27 @@ private fun ProductRow(product: Product) {
                 Spacer(modifier = Modifier.height(4.dp))
                 Text("HSN: ${product.hsnCode.ifBlank { "N/A" }}", fontSize = 11.sp, color = AppColors.textSecondary)
                 Text(
-                    "Stock: ${product.currentStock} ${product.stockUnit.ifBlank { product.unit }} | Low at ${product.lowStockThreshold}",
+                    "Stock: ${product.currentStock} ${product.stockUnit.ifBlank { product.unit }}",
                     fontSize = 11.sp,
                     color = AppColors.textSecondary
                 )
+                if (product.enableStockAlert) {
+                    Text("Alert below ${product.lowStockThreshold}", fontSize = 11.sp, color = AppColors.textSecondary)
+                }
                 if (product.barcodeValue.isNotBlank()) {
                     Text("Barcode: ${product.barcodeValue}", fontSize = 11.sp, color = AppColors.textSecondary)
                 }
             }
 
             Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onEdit) {
+                        Icon(Icons.Outlined.Edit, contentDescription = "Edit Product", tint = AppColors.primary)
+                    }
+                    IconButton(onClick = onDelete) {
+                        Icon(Icons.Default.Delete, contentDescription = "Delete Product", tint = AppColors.error)
+                    }
+                }
                 AssistChip(
                     onClick = {},
                     enabled = false,
@@ -228,61 +408,98 @@ private fun ProductRow(product: Product) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@Suppress("DEPRECATION")
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-fun AddProductForm(
+fun ProductEditorScreen(
     viewModel: AppViewModel,
+    mode: ProductSheetMode,
+    existingProduct: Product?,
     onDismiss: () -> Unit
 ) {
-    var name by remember { mutableStateOf("") }
-    var hsnCode by remember { mutableStateOf("") }
-    var selectedUnit by remember { mutableStateOf("PCS") }
-    var saleRateStr by remember { mutableStateOf("") }
-    var purchaseRateStr by remember { mutableStateOf("") }
-    var gstRate by remember { mutableStateOf(18.0) }
-    var openingStockStr by remember { mutableStateOf("0") }
-    var lowStockThresholdStr by remember { mutableStateOf("5") }
-    var barcodeValue by remember { mutableStateOf("") }
-    var secondaryUnit by remember { mutableStateOf("") }
-    var conversionFactorStr by remember { mutableStateOf("1") }
-    var batchEnabled by remember { mutableStateOf(false) }
-    var batchNumber by remember { mutableStateOf("") }
-    var expiryEnabled by remember { mutableStateOf(false) }
-    var expiryDate by remember { mutableStateOf("") }
-    var serialEnabled by remember { mutableStateOf(false) }
+    var editorState by remember(existingProduct, mode) {
+        mutableStateOf(existingProduct?.toEditorState() ?: ProductEditorState())
+    }
     var showError by remember { mutableStateOf(false) }
     var unitDropdownExpanded by remember { mutableStateOf(false) }
     var gstExpanded by remember { mutableStateOf(false) }
     var showBarcodeScanner by remember { mutableStateOf(false) }
+    var hsnResults by remember { mutableStateOf<List<HsnEntry>>(emptyList()) }
+    var showHsnDialog by remember { mutableStateOf(false) }
 
     val units = listOf("PCS", "KG", "GM", "MG", "LTR", "ML", "BOX", "BAG", "NOS", "MTR")
     val gstRates = listOf(0.0, 5.0, 12.0, 18.0, 28.0)
     val scrollState = rememberScrollState()
+
+    if (showBarcodeScanner) {
+        BarcodeScannerDialog(
+            onDismiss = { showBarcodeScanner = false },
+            onScanned = {
+                editorState = editorState.copy(barcodeValue = it)
+                showBarcodeScanner = false
+            }
+        )
+    }
+
+    if (showHsnDialog) {
+        AlertDialog(
+            onDismissRequest = { showHsnDialog = false },
+            title = { Text("Select HSN") },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(260.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (hsnResults.isEmpty()) {
+                        Text("No HSN results found for this product name.")
+                    } else {
+                        hsnResults.forEach { result ->
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(containerColor = AppColors.cardBg)
+                            ) {
+                                TextButton(
+                                    onClick = {
+                                        editorState = editorState.copy(hsnCode = result.code)
+                                        showHsnDialog = false
+                                    }
+                                ) {
+                                    Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.Start) {
+                                        Text(result.code, fontWeight = FontWeight.Bold)
+                                        Text(result.description, fontSize = 12.sp, color = AppColors.textSecondary)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showHsnDialog = false }) {
+                    Text("Close")
+                }
+            }
+        )
+    }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = AppColors.screenBg,
         topBar = {
             TopAppBar(
-                title = { Text("Add New Product", fontWeight = FontWeight.Bold) },
+                title = { Text(if (mode == ProductSheetMode.EDIT) "Edit Product" else "Add Product", fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(onClick = onDismiss) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = AppColors.cardBg)
             )
         }
-        ) { innerPadding ->
-        if (showBarcodeScanner) {
-            BarcodeScannerDialog(
-                onDismiss = { showBarcodeScanner = false },
-                onScanned = {
-                    barcodeValue = it
-                    showBarcodeScanner = false
-                }
-            )
-        }
+    ) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -294,39 +511,35 @@ fun AddProductForm(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
+                value = editorState.name,
+                onValueChange = { editorState = editorState.copy(name = it) },
                 label = { Text("Product / Item Name *") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
 
             ProductOptionalFields(
-                hsnCode = hsnCode,
-                onHsnChange = { hsnCode = it },
-                onAutoDetectHsn = {
-                    val matches = HsnLookup.search(name.trim())
-                    when {
-                        name.isBlank() -> showError = true
-                        matches.isEmpty() -> showError = true
-                        else -> hsnCode = matches.first().code
-                    }
+                hsnCode = editorState.hsnCode,
+                onHsnChange = { editorState = editorState.copy(hsnCode = it) },
+                onFindHsn = {
+                    hsnResults = HsnLookup.search(editorState.name.trim())
+                    showHsnDialog = true
                 },
-                batchEnabled = batchEnabled,
-                onBatchEnabledChange = { batchEnabled = it },
-                batchNumber = batchNumber,
-                onBatchNumberChange = { batchNumber = it },
-                expiryEnabled = expiryEnabled,
-                onExpiryEnabledChange = { expiryEnabled = it },
-                expiryDate = expiryDate,
-                onExpiryDateChange = { expiryDate = it },
-                serialEnabled = serialEnabled,
-                onSerialEnabledChange = { serialEnabled = it }
+                batchEnabled = editorState.batchEnabled,
+                onBatchEnabledChange = { editorState = editorState.copy(batchEnabled = it) },
+                batchNumber = editorState.batchNumber,
+                onBatchNumberChange = { editorState = editorState.copy(batchNumber = it) },
+                expiryEnabled = editorState.expiryEnabled,
+                onExpiryEnabledChange = { editorState = editorState.copy(expiryEnabled = it) },
+                expiryDate = editorState.expiryDate,
+                onExpiryDateChange = { editorState = editorState.copy(expiryDate = it) },
+                serialEnabled = editorState.serialEnabled,
+                onSerialEnabledChange = { editorState = editorState.copy(serialEnabled = it) }
             )
 
             OutlinedTextField(
-                value = barcodeValue,
-                onValueChange = { barcodeValue = it.trim() },
+                value = editorState.barcodeValue,
+                onValueChange = { editorState = editorState.copy(barcodeValue = it.trim()) },
                 label = { Text("Barcode / QR Code") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
@@ -339,7 +552,7 @@ fun AddProductForm(
 
             Box(modifier = Modifier.fillMaxWidth()) {
                 OutlinedTextField(
-                    value = selectedUnit,
+                    value = editorState.unit,
                     onValueChange = {},
                     label = { Text("Unit of Measurement *") },
                     readOnly = true,
@@ -348,7 +561,7 @@ fun AddProductForm(
                         Icon(
                             Icons.Default.KeyboardArrowDown,
                             contentDescription = null,
-                            modifier = Modifier.clickable { unitDropdownExpanded = true }
+                            modifier = Modifier.combinedClickable(onClick = { unitDropdownExpanded = true })
                         )
                     }
                 )
@@ -360,7 +573,7 @@ fun AddProductForm(
                         DropdownMenuItem(
                             text = { Text(unit) },
                             onClick = {
-                                selectedUnit = unit
+                                editorState = editorState.copy(unit = unit)
                                 unitDropdownExpanded = false
                             }
                         )
@@ -370,14 +583,14 @@ fun AddProductForm(
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 DecimalField(
-                    value = saleRateStr,
-                    onValueChange = { saleRateStr = it },
+                    value = editorState.saleRate,
+                    onValueChange = { editorState = editorState.copy(saleRate = it) },
                     label = "Sale Rate (Rs) *",
                     modifier = Modifier.weight(1f)
                 )
                 DecimalField(
-                    value = purchaseRateStr,
-                    onValueChange = { purchaseRateStr = it },
+                    value = editorState.purchaseRate,
+                    onValueChange = { editorState = editorState.copy(purchaseRate = it) },
                     label = "Cost Rate (Rs) *",
                     modifier = Modifier.weight(1f)
                 )
@@ -385,7 +598,7 @@ fun AddProductForm(
 
             ExposedDropdownMenuBox(expanded = gstExpanded, onExpandedChange = { gstExpanded = it }) {
                 OutlinedTextField(
-                    value = "${gstRate.toInt()}%",
+                    value = "${editorState.gstRate.toInt()}%",
                     onValueChange = {},
                     readOnly = true,
                     label = { Text("GST Rate") },
@@ -397,7 +610,7 @@ fun AddProductForm(
                         DropdownMenuItem(
                             text = { Text("${rate.toInt()}%") },
                             onClick = {
-                                gstRate = rate
+                                editorState = editorState.copy(gstRate = rate)
                                 gstExpanded = false
                             }
                         )
@@ -405,44 +618,71 @@ fun AddProductForm(
                 }
             }
 
-            DecimalField(
-                value = openingStockStr,
-                onValueChange = { openingStockStr = it },
-                label = "Opening Stock Quantity",
-                modifier = Modifier.fillMaxWidth()
-            )
-
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 DecimalField(
-                    value = lowStockThresholdStr,
-                    onValueChange = { lowStockThresholdStr = it },
-                    label = "Low Stock Threshold",
+                    value = editorState.openingStock,
+                    onValueChange = { editorState = editorState.copy(openingStock = it) },
+                    label = "Opening Stock Quantity",
                     modifier = Modifier.weight(1f)
                 )
+                DecimalField(
+                    value = editorState.currentStock,
+                    onValueChange = { editorState = editorState.copy(currentStock = it) },
+                    label = "Current Stock",
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Low stock alert", fontWeight = FontWeight.Medium)
+                    Text(
+                        if (editorState.enableStockAlert) "Alert will show when stock reaches threshold"
+                        else "This product will never raise low stock warnings",
+                        fontSize = 12.sp,
+                        color = AppColors.textSecondary
+                    )
+                }
+                Switch(
+                    checked = editorState.enableStockAlert,
+                    onCheckedChange = {
+                        editorState = editorState.copy(enableStockAlert = it)
+                    }
+                )
+            }
+
+            if (editorState.enableStockAlert) {
+                DecimalField(
+                    value = editorState.lowStockThreshold,
+                    onValueChange = { editorState = editorState.copy(lowStockThreshold = it) },
+                    label = "Alert when stock falls below",
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 OutlinedTextField(
-                    value = secondaryUnit,
-                    onValueChange = { secondaryUnit = it.uppercase() },
+                    value = editorState.secondaryUnit,
+                    onValueChange = { editorState = editorState.copy(secondaryUnit = it.uppercase()) },
                     label = { Text("Secondary Unit") },
                     modifier = Modifier.weight(1f),
                     singleLine = true
                 )
+                DecimalField(
+                    value = editorState.conversionFactor,
+                    onValueChange = { editorState = editorState.copy(conversionFactor = it) },
+                    label = "Conversion Factor",
+                    modifier = Modifier.weight(1f)
+                )
             }
-
-            DecimalField(
-                value = conversionFactorStr,
-                onValueChange = { conversionFactorStr = it },
-                label = "Conversion Factor",
-                supportingText = if (secondaryUnit.isBlank()) {
-                    "1 secondary unit = X $selectedUnit"
-                } else {
-                    "1 $secondaryUnit = ${conversionFactorStr.ifBlank { "1" }} $selectedUnit"
-                },
-                modifier = Modifier.fillMaxWidth()
-            )
 
             if (showError) {
                 Text(
-                    "Please fill in the required fields. Enter a product name before using Auto-detect HSN.",
+                    "Please fill the required product details before saving.",
                     color = AppColors.error,
                     fontSize = 12.sp
                 )
@@ -450,35 +690,37 @@ fun AddProductForm(
 
             Button(
                 onClick = {
-                    val saleRate = saleRateStr.toDoubleOrNull()
-                    val purchaseRate = purchaseRateStr.toDoubleOrNull()
-                    val openingStock = openingStockStr.toDoubleOrNull() ?: 0.0
-                    val lowStockThreshold = lowStockThresholdStr.toDoubleOrNull() ?: 5.0
-                    val conversionFactor = conversionFactorStr.toDoubleOrNull() ?: 1.0
-                    if (name.isBlank() || saleRate == null || purchaseRate == null) {
+                    val saleRate = editorState.saleRate.toDoubleOrNull()
+                    val purchaseRate = editorState.purchaseRate.toDoubleOrNull()
+                    val openingStock = editorState.openingStock.toDoubleOrNull() ?: 0.0
+                    val currentStock = editorState.currentStock.toDoubleOrNull() ?: openingStock
+                    val lowStockThreshold = editorState.lowStockThreshold.toDoubleOrNull() ?: 5.0
+                    val conversionFactor = editorState.conversionFactor.toDoubleOrNull() ?: 1.0
+                    if (editorState.name.isBlank() || saleRate == null || purchaseRate == null) {
                         showError = true
                     } else {
                         viewModel.saveProduct(
                             Product(
-                                id = UUID.randomUUID().toString(),
-                                name = name.trim(),
-                                hsnCode = hsnCode,
-                                unit = selectedUnit,
+                                id = editorState.id ?: UUID.randomUUID().toString(),
+                                name = editorState.name.trim(),
+                                hsnCode = editorState.hsnCode,
+                                unit = editorState.unit,
                                 saleRate = saleRate,
                                 purchaseRate = purchaseRate,
-                                gstRate = gstRate,
+                                gstRate = editorState.gstRate,
                                 openingStock = openingStock,
-                                currentStock = openingStock,
+                                currentStock = currentStock,
+                                enableStockAlert = editorState.enableStockAlert,
                                 lowStockThreshold = lowStockThreshold,
-                                stockUnit = selectedUnit,
-                                barcodeValue = barcodeValue,
-                                secondaryUnit = secondaryUnit,
+                                stockUnit = editorState.unit,
+                                barcodeValue = editorState.barcodeValue,
+                                secondaryUnit = editorState.secondaryUnit,
                                 conversionFactor = conversionFactor,
-                                batchEnabled = batchEnabled,
-                                batchNumber = if (batchEnabled) batchNumber.trim() else "",
-                                expiryEnabled = expiryEnabled,
-                                expiryDate = if (expiryEnabled) expiryDate.trim() else "",
-                                serialEnabled = serialEnabled
+                                batchEnabled = editorState.batchEnabled,
+                                batchNumber = if (editorState.batchEnabled) editorState.batchNumber.trim() else "",
+                                expiryEnabled = editorState.expiryEnabled,
+                                expiryDate = if (editorState.expiryEnabled) editorState.expiryDate.trim() else "",
+                                serialEnabled = editorState.serialEnabled
                             )
                         ) {
                             onDismiss()
@@ -493,7 +735,11 @@ fun AddProductForm(
             ) {
                 Icon(Icons.Default.Check, contentDescription = null)
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("Save Product", color = AppColors.textOnPrimary, fontWeight = FontWeight.Bold)
+                Text(
+                    if (mode == ProductSheetMode.EDIT) "Update Product" else "Save Product",
+                    color = AppColors.textOnPrimary,
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
     }
@@ -504,14 +750,12 @@ private fun DecimalField(
     value: String,
     onValueChange: (String) -> Unit,
     label: String,
-    modifier: Modifier = Modifier,
-    supportingText: String? = null
+    modifier: Modifier = Modifier
 ) {
     OutlinedTextField(
         value = value,
         onValueChange = { onValueChange(filterDecimalInput(it)) },
         label = { Text(label) },
-        supportingText = supportingText?.let { { Text(it) } },
         modifier = modifier.onFocusChanged { state ->
             if (state.isFocused && (value == "0" || value == "0.0")) {
                 onValueChange("")

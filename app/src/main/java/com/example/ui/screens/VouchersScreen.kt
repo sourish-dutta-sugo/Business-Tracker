@@ -13,6 +13,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -23,9 +25,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Assignment
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Assignment
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
@@ -34,7 +37,16 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.CreditCard
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.LocalShipping
+import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.RequestQuote
+import androidx.compose.material.icons.filled.Store
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Upload
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -62,10 +74,13 @@ import com.example.ui.theme.AppColors
 import com.example.ui.theme.Colors
 import com.example.ui.theme.zeroBookInputColors
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.graphics.asImageBitmap
@@ -99,6 +114,21 @@ private data class ParsedBillItemDraft(
     val unit: String,
     val rate: String,
     val included: Boolean = true
+)
+
+private data class VoucherTypeCardData(
+    val key: String,
+    val title: String,
+    val description: String,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val accent: Color
+)
+
+private data class JournalUiRow(
+    val id: String = UUID.randomUUID().toString(),
+    val accountHead: String = "",
+    val debitText: String = "",
+    val creditText: String = ""
 )
 
 @Composable
@@ -572,7 +602,7 @@ fun VouchersScreen(
                             modifier = Modifier.padding(32.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Default.Assignment,
+                                imageVector = Icons.AutoMirrored.Filled.Assignment,
                                 contentDescription = null,
                                 tint = AppColors.textTertiary,
                                 modifier = Modifier.size(56.dp)
@@ -686,19 +716,21 @@ fun VouchersScreen(
 }
 
 // Interactive Sub-screen for Voucher Add / Post Flow
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun NewVoucherScreen(
     viewModel: AppViewModel,
     voucherId: String? = null,
     isDesktop: Boolean = false,
     onNavigateBack: () -> Unit,
-    onNavigateToInvoice: (String) -> Unit
+    onNavigateToInvoice: (String) -> Unit,
+    onNavigateToPartyDetail: (String) -> Unit = {}
 ) {
     val profile by viewModel.profile.collectAsState()
     val parties by viewModel.parties.collectAsState()
     val products by viewModel.products.collectAsState()
     val ledgerEntries by viewModel.ledgerEntries.collectAsState()
+    val ledgerAccounts by viewModel.ledgerAccounts.collectAsState()
     val vouchers by viewModel.vouchers.collectAsState()
     val voucherPrefillRequest by viewModel.voucherPrefillRequest.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -755,6 +787,9 @@ fun NewVoucherScreen(
     var pendingAdvanceReceiptVoucherId by remember { mutableStateOf<String?>(null) }
     var pendingAdvanceReceiptEmail by remember { mutableStateOf("") }
     var pendingAfterSaveAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    val journalRows = remember {
+        mutableStateListOf(JournalUiRow(), JournalUiRow())
+    }
     
     // Line items
     val lineItems = remember { mutableStateListOf<VoucherItem>() }
@@ -819,6 +854,9 @@ fun NewVoucherScreen(
     var quickAddProductItemIndex by remember { mutableStateOf<Int?>(null) }
     var showItemEntrySheet by remember { mutableStateOf(false) }
     var editingItemIndex by remember { mutableStateOf<Int?>(null) }
+    var showStockReportSheet by remember { mutableStateOf(false) }
+    var inlineCreatedProductId by remember { mutableStateOf<String?>(null) }
+    var inlineEditProductId by remember { mutableStateOf<String?>(null) }
 
     // Dialog trigger flags
     var showUpiPaymentDialog by remember { mutableStateOf(false) }
@@ -899,6 +937,34 @@ fun NewVoucherScreen(
     }
     val isCustomerVoucher = selectedType == "SALE" || selectedType == "RECEIPT" || selectedType == "SALE_RETURN"
     val isThreeStepVoucher = selectedType == "SALE" || selectedType == "PURCHASE"
+    val pagerState = rememberPagerState(initialPage = (formStep - 1).coerceIn(0, 2), pageCount = { 3 })
+    val voucherTabs = remember(selectedType) {
+        if (selectedType == "PURCHASE") {
+            listOf(
+                Triple("Supplier & Items", Icons.Default.Store, 0),
+                Triple("Payment & Charges", Icons.Default.CreditCard, 1),
+                Triple("Review", Icons.Default.Check, 2)
+            )
+        } else {
+            listOf(
+                Triple("Party & Items", Icons.AutoMirrored.Filled.Assignment, 0),
+                Triple("Payment & Charges", Icons.Default.CreditCard, 1),
+                Triple("Review", Icons.Default.Check, 2)
+            )
+        }
+    }
+
+    LaunchedEffect(isThreeStepVoucher, formStep) {
+        if (isThreeStepVoucher) {
+            pagerState.scrollToPage((formStep - 1).coerceIn(0, 2))
+        }
+    }
+
+    LaunchedEffect(isThreeStepVoucher, pagerState.currentPage) {
+        if (isThreeStepVoucher) {
+            formStep = pagerState.currentPage + 1
+        }
+    }
     val partyTypeLabel = if (isCustomerVoucher) "customer" else "supplier"
     val hasTransportDetails = remember(
         transportName,
@@ -1129,52 +1195,102 @@ fun NewVoucherScreen(
     }
 
     val validateAndSave: (Boolean) -> Unit = { shouldPrint ->
-        val isBill = (selectedType != "RECEIPT" && selectedType != "PAYMENT")
-        if ((selectedType == "SALE_RETURN" || selectedType == "PURCHASE_RETURN") && selectedSourceVoucherId == null) {
-            android.widget.Toast.makeText(context, "Cannot save: Select the original invoice first.", android.widget.Toast.LENGTH_LONG).show()
-        } else if ((selectedType == "SALE_RETURN" || selectedType == "PURCHASE_RETURN") && lineItems.none { it.qty > 0.0 }) {
-            android.widget.Toast.makeText(context, "Cannot save: Keep at least one return quantity above zero.", android.widget.Toast.LENGTH_LONG).show()
-        } else if (isBill && lineItems.isEmpty()) {
-            android.widget.Toast.makeText(context, "Cannot save: Add at least 1 item!", android.widget.Toast.LENGTH_LONG).show()
-        } else if (isBill && lineItems.any { it.qty <= 0.0 }) {
-            android.widget.Toast.makeText(context, "Cannot save: Invalid quantities!", android.widget.Toast.LENGTH_LONG).show()
-        } else if (!isBill && netAmount.value <= 0.0) {
-            android.widget.Toast.makeText(context, "Cannot save: Invalid amount!", android.widget.Toast.LENGTH_LONG).show()
-        } else if (selectedType == "SALE" && paymentMode == "PART PAYMENT" && (partialAmountPaidText.toDoubleOrNull() ?: 0.0) <= 0.0) {
-            android.widget.Toast.makeText(context, "Cannot save: Enter part payment amount.", android.widget.Toast.LENGTH_LONG).show()
-        } else if (selectedType == "SALE" && paymentMode == "PART PAYMENT" && (partialAmountPaidText.toDoubleOrNull() ?: 0.0) >= netAmount.value) {
-            android.widget.Toast.makeText(context, "Cannot save: Part payment must be less than net total.", android.widget.Toast.LENGTH_LONG).show()
-        } else if (paymentMode == "CHEQUE" && (chequeNo.isBlank() || bankName.isBlank())) {
-            android.widget.Toast.makeText(context, "Cannot save: Main Cheque details are missing!", android.widget.Toast.LENGTH_LONG).show()
-        } else if (voucherNo.isBlank()) {
-            android.widget.Toast.makeText(context, "Cannot save: Voucher Number is missing!", android.widget.Toast.LENGTH_LONG).show()
-        } else if ((selectedType == "PURCHASE" || selectedType == "PAYMENT") && selectedParty == null) {
-            android.widget.Toast.makeText(context, "Cannot save: Party is required for Purchase and Payment!", android.widget.Toast.LENGTH_LONG).show()
+        if (selectedType == "JOURNAL") {
+            val totalDr = journalRows.sumOf { it.debitText.toDoubleOrNull() ?: 0.0 }
+            val totalCr = journalRows.sumOf { it.creditText.toDoubleOrNull() ?: 0.0 }
+            val hasValidRows = journalRows.count { it.accountHead.isNotBlank() } >= 2
+            if (!hasValidRows) {
+                android.widget.Toast.makeText(context, "Add at least two journal rows.", android.widget.Toast.LENGTH_LONG).show()
+            } else if (totalDr <= 0.0 || totalCr <= 0.0 || kotlin.math.abs(totalDr - totalCr) > 0.009) {
+                android.widget.Toast.makeText(context, "Total DR must equal total CR.", android.widget.Toast.LENGTH_LONG).show()
+            } else {
+                saveShouldPrint = false
+                showConfirmSaveDialog = true
+            }
         } else {
-            saveShouldPrint = shouldPrint
-            showConfirmSaveDialog = true
+            val isBill = (selectedType != "RECEIPT" && selectedType != "PAYMENT")
+            if ((selectedType == "SALE_RETURN" || selectedType == "PURCHASE_RETURN") && selectedSourceVoucherId == null) {
+                android.widget.Toast.makeText(context, "Cannot save: Select the original invoice first.", android.widget.Toast.LENGTH_LONG).show()
+            } else if ((selectedType == "SALE_RETURN" || selectedType == "PURCHASE_RETURN") && lineItems.none { it.qty > 0.0 }) {
+                android.widget.Toast.makeText(context, "Cannot save: Keep at least one return quantity above zero.", android.widget.Toast.LENGTH_LONG).show()
+            } else if (isBill && lineItems.isEmpty()) {
+                android.widget.Toast.makeText(context, "Cannot save: Add at least 1 item!", android.widget.Toast.LENGTH_LONG).show()
+            } else if (isBill && lineItems.any { it.qty <= 0.0 }) {
+                android.widget.Toast.makeText(context, "Cannot save: Invalid quantities!", android.widget.Toast.LENGTH_LONG).show()
+            } else if (!isBill && netAmount.value <= 0.0) {
+                android.widget.Toast.makeText(context, "Cannot save: Invalid amount!", android.widget.Toast.LENGTH_LONG).show()
+            } else if (selectedType == "SALE" && paymentMode == "PART PAYMENT" && (partialAmountPaidText.toDoubleOrNull() ?: 0.0) <= 0.0) {
+                android.widget.Toast.makeText(context, "Cannot save: Enter part payment amount.", android.widget.Toast.LENGTH_LONG).show()
+            } else if (selectedType == "SALE" && paymentMode == "PART PAYMENT" && (partialAmountPaidText.toDoubleOrNull() ?: 0.0) >= netAmount.value) {
+                android.widget.Toast.makeText(context, "Cannot save: Part payment must be less than net total.", android.widget.Toast.LENGTH_LONG).show()
+            } else if (paymentMode == "CHEQUE" && (chequeNo.isBlank() || bankName.isBlank())) {
+                android.widget.Toast.makeText(context, "Cannot save: Main Cheque details are missing!", android.widget.Toast.LENGTH_LONG).show()
+            } else if (voucherNo.isBlank()) {
+                android.widget.Toast.makeText(context, "Cannot save: Voucher Number is missing!", android.widget.Toast.LENGTH_LONG).show()
+            } else if ((selectedType == "PURCHASE" || selectedType == "PAYMENT") && selectedParty == null) {
+                android.widget.Toast.makeText(context, "Cannot save: Party is required for Purchase and Payment!", android.widget.Toast.LENGTH_LONG).show()
+            } else {
+                saveShouldPrint = shouldPrint
+                showConfirmSaveDialog = true
+            }
         }
     }
 
     val saveTheVoucher: (Boolean) -> Unit = { shouldPrint ->
-        val finalId = voucherId?.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString()
-        val finalLineItems = if (selectedType == "SALE_RETURN" || selectedType == "PURCHASE_RETURN") {
-            lineItems.filter { it.qty > 0.0 }
+        if (selectedType == "JOURNAL") {
+            val finalId = voucherId?.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString()
+            val lines = journalRows.mapNotNull { row ->
+                if (row.accountHead.isBlank()) null else com.example.data.JournalLine(
+                    accountHead = row.accountHead,
+                    debit = row.debitText.toDoubleOrNull() ?: 0.0,
+                    credit = row.creditText.toDoubleOrNull() ?: 0.0
+                )
+            }
+            val journalTotal = lines.sumOf { it.debit }
+            viewModel.saveJournalVoucher(
+                voucher = Voucher(
+                    id = finalId,
+                    voucherNo = voucherNo,
+                    type = "JOURNAL",
+                    date = voucherDate,
+                    partyId = null,
+                    narration = narration,
+                    taxableAmount = journalTotal,
+                    cgst = 0.0,
+                    sgst = 0.0,
+                    igst = 0.0,
+                    roundOff = 0.0,
+                    netAmount = journalTotal,
+                    paymentMode = "JOURNAL",
+                    chequeNo = null,
+                    chequeDate = null,
+                    bankName = null,
+                    isIgst = false,
+                    status = "POSTED"
+                ),
+                lines = lines
+            ) {
+                onNavigateBack()
+            }
         } else {
-            lineItems.toList()
-        }
-        val finalAdditionalCharges = if (selectedType == "SALE_RETURN" || selectedType == "PURCHASE_RETURN") {
-            emptyList()
-        } else {
-            additionalCharges.toList()
-        }
-        val partialAmountPaid = partialAmountPaidText.toDoubleOrNull() ?: 0.0
-        val remainingCreditAmount = when {
-            selectedType == "SALE" && paymentMode == "PART PAYMENT" -> (netAmount.value - partialAmountPaid).coerceAtLeast(0.0)
-            selectedType == "SALE" && paymentMode == "CREDIT" -> netAmount.value
-            else -> 0.0
-        }
-        val voucherObj = Voucher(
+            val finalId = voucherId?.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString()
+            val finalLineItems = if (selectedType == "SALE_RETURN" || selectedType == "PURCHASE_RETURN") {
+                lineItems.filter { it.qty > 0.0 }
+            } else {
+                lineItems.toList()
+            }
+            val finalAdditionalCharges = if (selectedType == "SALE_RETURN" || selectedType == "PURCHASE_RETURN") {
+                emptyList()
+            } else {
+                additionalCharges.toList()
+            }
+            val partialAmountPaid = partialAmountPaidText.toDoubleOrNull() ?: 0.0
+            val remainingCreditAmount = when {
+                selectedType == "SALE" && paymentMode == "PART PAYMENT" -> (netAmount.value - partialAmountPaid).coerceAtLeast(0.0)
+                selectedType == "SALE" && paymentMode == "CREDIT" -> netAmount.value
+                else -> 0.0
+            }
+            val voucherObj = Voucher(
                 id = finalId,
                 voucherNo = voucherNo,
                 type = selectedType,
@@ -1283,6 +1399,7 @@ fun NewVoucherScreen(
                     completeSaveFlow()
                 }
             }
+        }
     }
 
     if (showAdvanceReceiptEmailDialog) {
@@ -1346,7 +1463,7 @@ fun NewVoucherScreen(
                     title = { Text("Select Voucher Type", fontWeight = FontWeight.Bold) },
                     navigationIcon = {
                         IconButton(onClick = onNavigateBack) {
-                            Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back")
+                            Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
@@ -1362,38 +1479,59 @@ fun NewVoucherScreen(
                     .fillMaxSize()
                     .background(AppColors.screenBg)
                     .padding(innerPadding)
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                    .padding(16.dp)
             ) {
-                val types = listOf(
-                    "SALE" to "Generate modern tax invoice for customers",
-                    "PURCHASE" to "Record inward supply bills & invoices",
-                    "QUOTATION" to "Create estimate or quotation without posting ledgers",
-                    "DELIVERY_CHALLAN" to "Create delivery challan without ledger posting",
-                    "RECEIPT" to "Receive outstanding/cash from party",
-                    "PAYMENT" to "Record outward cash/bank payment directly",
-                    "SALE_RETURN" to "Reverse previous sales (Credit Note)",
-                    "PURCHASE_RETURN" to "Reverse previous purchases (Debit Note)",
-                    "BILLS_RECEIVABLE" to "Record bills receivable from customers",
-                    "BILLS_PAYABLE" to "Record bills payable to suppliers"
+                val voucherTypes = listOf(
+                    VoucherTypeCardData("SALE", "Sale Invoice", "Record a sale to customer", Icons.AutoMirrored.Filled.ReceiptLong, Color(0xFF2563EB)),
+                    VoucherTypeCardData("PURCHASE", "Purchase Invoice", "Record purchase from supplier", Icons.Default.Store, Color(0xFF7C3AED)),
+                    VoucherTypeCardData("SALE_RETURN", "Sales Return", "Customer returns goods", Icons.Default.SwapHoriz, Color(0xFFEA580C)),
+                    VoucherTypeCardData("PURCHASE_RETURN", "Purchase Return", "Return goods to supplier", Icons.Default.SwapHoriz, Color(0xFFB91C1C)),
+                    VoucherTypeCardData("RECEIPT", "Receipt", "Receive payment from customer", Icons.Default.Payments, Color(0xFF059669)),
+                    VoucherTypeCardData("PAYMENT", "Payment", "Pay a supplier or expense", Icons.Default.CreditCard, Color(0xFFDC2626)),
+                    VoucherTypeCardData("DEBIT_NOTE", "Debit Note", "Raise debit against party", Icons.Default.Description, Color(0xFF9333EA)),
+                    VoucherTypeCardData("CREDIT_NOTE", "Credit Note", "Issue credit to party", Icons.Default.Description, Color(0xFF1D4ED8)),
+                    VoucherTypeCardData("BILLS_RECEIVABLE", "Bills Receivable", "View amounts owed to you", Icons.AutoMirrored.Filled.ReceiptLong, Color(0xFF0F766E)),
+                    VoucherTypeCardData("BILLS_PAYABLE", "Bills Payable", "View amounts you owe", Icons.AutoMirrored.Filled.ReceiptLong, Color(0xFF92400E)),
+                    VoucherTypeCardData("QUOTATION", "Quotation / Estimate", "Create estimate or quote", Icons.Default.RequestQuote, Color(0xFF4F46E5)),
+                    VoucherTypeCardData("DELIVERY_CHALLAN", "Delivery Challan", "Record goods dispatch", Icons.Default.LocalShipping, Color(0xFF0891B2)),
+                    VoucherTypeCardData("EXPENSE", "Expense Entry", "Record a business expense", Icons.Default.Inventory2, Color(0xFFBE185D)),
+                    VoucherTypeCardData("JOURNAL", "Journal Entry", "Manual accounting entry", Icons.Outlined.Edit, Color(0xFF334155))
                 )
 
-                types.forEach { (type, description) ->
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                selectedType = if (type == "SALE_RETURN") "SALE_RETURN" else if (type == "PURCHASE_RETURN") "PURCHASE_RETURN" else type as String
-                                formStep = 1
-                                step = 2
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(2),
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(bottom = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(voucherTypes.size) { index ->
+                        val type = voucherTypes[index]
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(100.dp)
+                                .clickable {
+                                    selectedType = type.key
+                                    formStep = 1
+                                    step = 2
+                                }
+                                .border(1.dp, type.accent, RoundedCornerShape(12.dp)),
+                            colors = CardDefaults.cardColors(containerColor = Color.White)
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(10.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                Icon(type.icon, contentDescription = null, tint = type.accent)
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(type.title, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color(0xFF0F172A))
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(type.description, fontSize = 10.sp, color = Color.Gray)
                             }
-                            .border(0.5.dp, Color(0xFFE8E8E8), RoundedCornerShape(8.dp)),
-                        colors = CardDefaults.cardColors(containerColor = AppColors.cardBg)
-                    ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text(text = type, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.primary)
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(text = description, fontSize = 12.sp, color = AppColors.textSecondary)
                         }
                     }
                 }
@@ -1401,6 +1539,173 @@ fun NewVoucherScreen(
         }
     } else {
         // Step 2: Main Entry layout
+        if (selectedType == "EXPENSE") {
+            ExpensesScreen(viewModel = viewModel, onNavigateBack = { step = 1 })
+            return
+        }
+        if (selectedType == "BILLS_RECEIVABLE") {
+            val billsReceivable by viewModel.billsReceivable.collectAsState()
+            Scaffold(
+                containerColor = AppColors.screenBg,
+                topBar = {
+                    TopAppBar(
+                        title = { Text("Bills Receivable", fontWeight = FontWeight.Bold) },
+                        navigationIcon = {
+                            IconButton(onClick = { step = 1 }) {
+                                Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                            }
+                        }
+                    )
+                }
+            ) { innerPadding ->
+                Box(modifier = Modifier.fillMaxSize().padding(innerPadding).padding(16.dp)) {
+                    AgedBillsListView(
+                        bills = billsReceivable,
+                        parties = parties,
+                        viewModel = viewModel,
+                        navigateToNewVoucher = { step = 2 }
+                    )
+                }
+            }
+            return
+        }
+        if (selectedType == "BILLS_PAYABLE") {
+            Scaffold(
+                containerColor = AppColors.screenBg,
+                topBar = {
+                    TopAppBar(
+                        title = { Text("Bills Payable", fontWeight = FontWeight.Bold) },
+                        navigationIcon = {
+                            IconButton(onClick = { step = 1 }) {
+                                Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                            }
+                        }
+                    )
+                }
+            ) { innerPadding ->
+                Box(modifier = Modifier.fillMaxSize().padding(innerPadding).padding(16.dp)) {
+                    PayablesBillsListView(
+                        vouchers = vouchers,
+                        parties = parties,
+                        navigateToNewVoucher = { step = 2 },
+                        viewModel = viewModel
+                    )
+                }
+            }
+            return
+        }
+        if (selectedType == "JOURNAL") {
+            Scaffold(
+                containerColor = AppColors.screenBg,
+                topBar = {
+                    TopAppBar(
+                        title = { Text("Journal Entry", fontWeight = FontWeight.Bold) },
+                        navigationIcon = {
+                            IconButton(onClick = { step = 1 }) {
+                                Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                            }
+                        }
+                    )
+                },
+                bottomBar = {
+                    StickyBottomBar(
+                        netAmount = journalRows.sumOf { it.debitText.toDoubleOrNull() ?: 0.0 },
+                        selectedType = "JOURNAL",
+                        saveButtonLabel = "Save & Post",
+                        onSaveClick = { validateAndSave(false) }
+                    )
+                }
+            ) { innerPadding ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding)
+                        .verticalScroll(rememberScrollState())
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    RetailTextField(
+                        value = Utils.formatDate(voucherDate),
+                        onValueChange = {},
+                        label = "Date",
+                        readOnly = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    RetailTextField(
+                        value = narration,
+                        onValueChange = { narration = it },
+                        label = "Narration",
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    journalRows.forEachIndexed { index, row ->
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = AppColors.cardBg),
+                            border = BorderStroke(1.dp, AppColors.border)
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                var accountExpanded by remember(row.id) { mutableStateOf(false) }
+                                OutlinedTextField(
+                                    value = row.accountHead,
+                                    onValueChange = {},
+                                    readOnly = true,
+                                    label = { Text("Account name") },
+                                    trailingIcon = {
+                                        Icon(
+                                            Icons.Default.KeyboardArrowDown,
+                                            contentDescription = null,
+                                            modifier = Modifier.clickable { accountExpanded = true }
+                                        )
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                DropdownMenu(
+                                    expanded = accountExpanded,
+                                    onDismissRequest = { accountExpanded = false }
+                                ) {
+                                    ledgerAccounts.forEach { account ->
+                                        DropdownMenuItem(
+                                            text = { Text(account.name) },
+                                            onClick = {
+                                                journalRows[index] = row.copy(accountHead = account.name)
+                                                accountExpanded = false
+                                            }
+                                        )
+                                    }
+                                }
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                                    RetailTextField(
+                                        value = row.debitText,
+                                        onValueChange = { journalRows[index] = row.copy(debitText = filterDecimalInput(it), creditText = if (it.isNotBlank()) "" else row.creditText) },
+                                        label = "DR amount",
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    RetailTextField(
+                                        value = row.creditText,
+                                        onValueChange = { journalRows[index] = row.copy(creditText = filterDecimalInput(it), debitText = if (it.isNotBlank()) "" else row.debitText) },
+                                        label = "CR amount",
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    OutlinedButton(
+                        onClick = { journalRows.add(JournalUiRow()) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Add row")
+                    }
+                    val totalDr = journalRows.sumOf { it.debitText.toDoubleOrNull() ?: 0.0 }
+                    val totalCr = journalRows.sumOf { it.creditText.toDoubleOrNull() ?: 0.0 }
+                    Text("Total DR: ${Utils.formatIndianCurrency(totalDr)}", fontWeight = FontWeight.SemiBold)
+                    Text("Total CR: ${Utils.formatIndianCurrency(totalCr)}", fontWeight = FontWeight.SemiBold)
+                }
+            }
+            return
+        }
         val listState = rememberLazyListState()
 
         Scaffold(
@@ -1409,29 +1714,22 @@ fun NewVoucherScreen(
                 Column {
                     TopAppBar(
                         title = {
-                            Column {
-                                Text(
-                                    if (isThreeStepVoucher) "Step $formStep of 3" else "New $selectedType",
-                                    fontWeight = FontWeight.Bold
-                                )
-                                if (isThreeStepVoucher) {
-                                    Text(
-                                        when (formStep) {
-                                            1 -> "Party and details"
-                                            2 -> "Items"
-                                            else -> "Review and save"
-                                        },
-                                        fontSize = 12.sp,
-                                        color = AppColors.textSecondary
-                                    )
-                                }
-                            }
+                            Text(
+                                if (selectedType == "SALE") "Sale Voucher"
+                                else if (selectedType == "PURCHASE") "Purchase Voucher"
+                                else "New $selectedType",
+                                fontWeight = FontWeight.Bold
+                            )
                         },
                         navigationIcon = {
                             IconButton(onClick = {
-                                if (isThreeStepVoucher && formStep > 1) formStep -= 1 else step = 1
+                                if (isThreeStepVoucher && pagerState.currentPage > 0) {
+                                    coroutineScope.launch {
+                                        pagerState.animateScrollToPage(pagerState.currentPage - 1)
+                                    }
+                                } else step = 1
                             }) {
-                                Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back")
+                                Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                             }
                         },
                         colors = TopAppBarDefaults.topAppBarColors(
@@ -1441,11 +1739,20 @@ fun NewVoucherScreen(
                         )
                     )
                     if (isThreeStepVoucher) {
-                        LinearProgressIndicator(
-                            progress = { formStep / 3f },
-                            modifier = Modifier.fillMaxWidth(),
-                            color = AppColors.primary
-                        )
+                        TabRow(selectedTabIndex = pagerState.currentPage) {
+                            voucherTabs.forEachIndexed { index, tab ->
+                                Tab(
+                                    selected = pagerState.currentPage == index,
+                                    onClick = {
+                                        coroutineScope.launch {
+                                            pagerState.animateScrollToPage(index)
+                                        }
+                                    },
+                                    text = { Text(tab.first) },
+                                    icon = { Icon(tab.second, contentDescription = null) }
+                                )
+                            }
+                        }
                     }
                 }
             },
@@ -1463,13 +1770,21 @@ fun NewVoucherScreen(
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
                                 OutlinedButton(
-                                    onClick = { if (formStep > 1) formStep -= 1 else step = 1 },
+                                    onClick = {
+                                        if (pagerState.currentPage > 0) {
+                                            coroutineScope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
+                                        } else step = 1
+                                    },
                                     modifier = Modifier.weight(1f).height(44.dp)
                                 ) {
                                     Text("Back")
                                 }
                                 Button(
-                                    onClick = { formStep = (formStep + 1).coerceAtMost(3) },
+                                    onClick = {
+                                        coroutineScope.launch {
+                                            pagerState.animateScrollToPage((pagerState.currentPage + 1).coerceAtMost(2))
+                                        }
+                                    },
                                     modifier = Modifier.weight(1f).height(44.dp),
                                     colors = ButtonDefaults.buttonColors(containerColor = AppColors.primary)
                                 ) {
@@ -1494,23 +1809,23 @@ fun NewVoucherScreen(
             modifier = Modifier.fillMaxSize()
         ) { innerPadding ->
             @Composable
-            fun FormContent(showStickyBar: Boolean) {
-                val showDetailsStep = !isThreeStepVoucher || formStep == 1
-                val showItemsStep = !isThreeStepVoucher || formStep == 2
-                val showReviewStep = !isThreeStepVoucher || formStep == 3
-                Column(
+            fun FormContent(showStickyBar: Boolean, forcedStep: Int? = null) {
+                val activeStep = forcedStep ?: formStep
+                val showDetailsStep = !isThreeStepVoucher || activeStep == 1
+                val showItemsStep = !isThreeStepVoucher || activeStep == 1
+                val showPaymentChargesStep = !isThreeStepVoucher || activeStep == 2
+                val showReviewStep = !isThreeStepVoucher || activeStep == 3
+                Box(
                     modifier = Modifier.fillMaxSize()
                 ) {
                     LazyColumn(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth(),
+                        modifier = Modifier.fillMaxSize(),
                         state = listState,
                         contentPadding = PaddingValues(
                             top = 8.dp,
                             start = 16.dp,
                             end = 16.dp,
-                            bottom = 160.dp
+                            bottom = if (showStickyBar) 180.dp else 160.dp
                         ),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
@@ -1725,12 +2040,37 @@ fun NewVoucherScreen(
                     }
 
                     if (selectedParty != null) {
-                        Text(
-                            text = "Party State: ${selectedParty?.state} | Interstate/IGST: ${if (isInterstate) "YES" else "NO"}",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (isInterstate) Color(0xFFFD7E14) else Color(0xFF1A73E8)
-                        )
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = AppColors.cardBg),
+                            border = BorderStroke(1.dp, AppColors.border)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(selectedParty?.name.orEmpty(), fontWeight = FontWeight.Bold, color = AppColors.textPrimary)
+                                    Text(
+                                        "Balance ${Utils.formatIndianCurrency(partyBalanceMap[selectedParty?.id].orEmptyBalance())} | ${selectedParty?.phone.orEmpty()}",
+                                        fontSize = 11.sp,
+                                        color = AppColors.textSecondary
+                                    )
+                                    Text(
+                                        "Party State: ${selectedParty?.state} | Interstate/IGST: ${if (isInterstate) "YES" else "NO"}",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isInterstate) Color(0xFFFD7E14) else Color(0xFF1A73E8)
+                                    )
+                                }
+                                TextButton(
+                                    onClick = { selectedParty?.id?.let(onNavigateToPartyDetail) }
+                                ) {
+                                    Text("View")
+                                }
+                            }
+                        }
                     }
 
                     val isPurchaseType = selectedType == "PURCHASE" || selectedType == "PURCHASE_RETURN"
@@ -1965,17 +2305,24 @@ fun NewVoucherScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Items Included", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = com.example.ui.theme.TextDark)
-                            if (!isReturnType) {
-                                Button(
-                                    onClick = {
-                                        editingItemIndex = null
-                                        showItemEntrySheet = true
-                                    },
-                                    shape = RoundedCornerShape(4.dp),
-                                    modifier = Modifier.testTag("add_item_button")
-                                ) {
-                                    Text("Add Item", fontSize = 11.sp, color = Color(0xFFFFFFFF))
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("Items Included", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = com.example.ui.theme.TextDark)
+                                TextButton(onClick = { showStockReportSheet = true }) {
+                                    Text("Stock")
+                                }
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                if (!isReturnType) {
+                                    Button(
+                                        onClick = {
+                                            editingItemIndex = null
+                                            showItemEntrySheet = true
+                                        },
+                                        shape = RoundedCornerShape(4.dp),
+                                        modifier = Modifier.testTag("add_item_button")
+                                    ) {
+                                        Text("Add Item", fontSize = 11.sp, color = Color(0xFFFFFFFF))
+                                    }
                                 }
                             }
                         }
@@ -2097,6 +2444,22 @@ fun NewVoucherScreen(
                                     }
                                 }
                             }
+                            }
+                        }
+
+                        if (isThreeStepVoucher && activeStep == 1) {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(containerColor = AppColors.cardBg),
+                                border = BorderStroke(1.dp, AppColors.border)
+                            ) {
+                                Text(
+                                    text = "Items ${lineItems.size} | Taxable ${Utils.formatIndianCurrency(taxableAmount.value)} | GST ${Utils.formatIndianCurrency(cgst.value + sgst.value + igst.value)} | Total ${Utils.formatIndianCurrency(netAmount.value)}",
+                                    modifier = Modifier.padding(12.dp),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = AppColors.textPrimary
+                                )
                             }
                         }
                     } else {
@@ -2254,6 +2617,7 @@ fun NewVoucherScreen(
                     }
                 }
 
+                if (showPaymentChargesStep) {
                 // Payment Mode Selector (Moved to Summary Area)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -2752,6 +3116,7 @@ fun NewVoucherScreen(
                         }
                     }
                 }
+                }
                     }
 
                 if (showParsedBillDialog) {
@@ -2905,16 +3270,21 @@ fun NewVoucherScreen(
             }
 
             if (showStickyBar) {
-                StickyBottomBar(
-                    netAmount = netAmount.value,
-                    selectedType = selectedType,
-                    saveButtonLabel = if (selectedType == "QUOTATION" || selectedType == "DELIVERY_CHALLAN") {
-                        if (isEditMode) "Update Draft" else "Save Draft"
-                    } else {
-                        if (isEditMode) "Update & Post" else "Save & Post"
-                    },
-                    onSaveClick = { shouldPrint -> validateAndSave(shouldPrint) }
-                )
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.BottomCenter
+                ) {
+                    StickyBottomBar(
+                        netAmount = netAmount.value,
+                        selectedType = selectedType,
+                        saveButtonLabel = if (selectedType == "QUOTATION" || selectedType == "DELIVERY_CHALLAN") {
+                            if (isEditMode) "Update Draft" else "Save Draft"
+                        } else {
+                            if (isEditMode) "Update & Post" else "Save & Post"
+                        },
+                        onSaveClick = { shouldPrint -> validateAndSave(shouldPrint) }
+                    )
+                }
             }
         }
 
@@ -2992,7 +3362,13 @@ fun NewVoucherScreen(
                     .padding(innerPadding)
                     .imePadding()
             ) {
-                FormContent(showStickyBar = false)
+                if (isThreeStepVoucher) {
+                    HorizontalPager(state = pagerState) { page ->
+                        FormContent(showStickyBar = false, forcedStep = page + 1)
+                    }
+                } else {
+                    FormContent(showStickyBar = false)
+                }
             }
         }
     }
@@ -3439,6 +3815,61 @@ fun NewVoucherScreen(
         )
     }
 
+    if (showStockReportSheet) {
+        BackHandler { showStockReportSheet = false }
+        ModalBottomSheet(
+            onDismissRequest = { showStockReportSheet = false },
+            containerColor = AppColors.cardBg
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+                    .padding(bottom = 24.dp)
+            ) {
+                Text("Current Stock Levels", fontWeight = FontWeight.Bold, color = AppColors.textPrimary)
+                Spacer(modifier = Modifier.height(12.dp))
+                StockReportScreen(products = products)
+            }
+        }
+    }
+
+    inlineCreatedProductId?.let { productId ->
+        val inlineProduct = products.find { it.id == productId }
+        if (inlineProduct != null) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                colors = CardDefaults.cardColors(containerColor = AppColors.cardBg),
+                border = BorderStroke(1.dp, AppColors.border)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Product added: ${inlineProduct.name}", color = AppColors.textPrimary, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { inlineEditProductId = inlineProduct.id }) {
+                        Text("Edit details later")
+                    }
+                }
+            }
+        }
+    }
+
+    inlineEditProductId?.let { productId ->
+        val product = products.find { it.id == productId }
+        if (product != null) {
+            ProductEditorScreen(
+                viewModel = viewModel,
+                mode = ProductSheetMode.EDIT,
+                existingProduct = product,
+                onDismiss = { inlineEditProductId = null }
+            )
+        }
+    }
+
     if (showPartyPickerSheet) {
         ModalBottomSheet(
             onDismissRequest = { showPartyPickerSheet = false },
@@ -3655,7 +4086,7 @@ fun NewVoucherScreen(
         var newProdName by remember(showQuickAddProductDialog) { mutableStateOf(quickAddInitialProductName) }
         var newProdHsn by remember { mutableStateOf("") }
         var quickHsnSuggestions by remember { mutableStateOf<List<HsnEntry>>(emptyList()) }
-        var wasQuickHsnAutoFilled by remember { mutableStateOf(false) }
+        var showQuickHsnDialog by remember { mutableStateOf(false) }
         var newProdUnit by remember { mutableStateOf("PCS") }
         var newProdSaleRate by remember { mutableStateOf("") }
         var newProdPurchaseRate by remember { mutableStateOf("") }
@@ -3670,15 +4101,6 @@ fun NewVoucherScreen(
 
         val units = listOf("PCS", "KG", "GM", "MG", "LTR", "ML", "BOX", "BAG", "NOS", "MTR")
         val gstRates = listOf("0.0", "5.0", "12.0", "18.0", "28.0")
-
-        LaunchedEffect(newProdName) {
-            if (newProdName.length >= 3) {
-                delay(400)
-                quickHsnSuggestions = HsnLookup.search(newProdName)
-            } else {
-                quickHsnSuggestions = emptyList()
-            }
-        }
 
         AlertDialog(
             onDismissRequest = {
@@ -3696,26 +4118,16 @@ fun NewVoucherScreen(
                 ) {
                     RetailTextField(
                         value = newProdName,
-                        onValueChange = {
-                            newProdName = it
-                            if (wasQuickHsnAutoFilled) {
-                                newProdHsn = ""
-                                wasQuickHsnAutoFilled = false
-                            }
-                        },
+                        onValueChange = { newProdName = it },
                         label = "Product Name *"
                     )
 
                     ProductOptionalFields(
                         hsnCode = newProdHsn,
                         onHsnChange = { newProdHsn = it },
-                        onAutoDetectHsn = {
-                            val match = quickHsnSuggestions.firstOrNull()
-                            if (match != null) {
-                                newProdHsn = match.code
-                                wasQuickHsnAutoFilled = true
-                                quickHsnSuggestions = emptyList()
-                            }
+                        onFindHsn = {
+                            quickHsnSuggestions = HsnLookup.search(newProdName.trim())
+                            showQuickHsnDialog = true
                         },
                         batchEnabled = batchEnabled,
                         onBatchEnabledChange = { batchEnabled = it },
@@ -3860,6 +4272,7 @@ fun NewVoucherScreen(
                             )
                             viewModel.saveProduct(prodObj) {
                                 pendingSelectedProduct = prodObj
+                                inlineCreatedProductId = prodObj.id
                                 // Auto-assign this product details to the selected Voucher item row!
                                 quickAddProductItemIndex?.let { index ->
                                     if (index in lineItems.indices) {
@@ -3904,6 +4317,46 @@ fun NewVoucherScreen(
                 }
             }
         )
+
+        if (showQuickHsnDialog) {
+            AlertDialog(
+                onDismissRequest = { showQuickHsnDialog = false },
+                title = { Text("Select HSN") },
+                text = {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 260.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (quickHsnSuggestions.isEmpty()) {
+                            Text("No HSN results found for this product name.")
+                        } else {
+                            quickHsnSuggestions.forEach { result ->
+                                TextButton(
+                                    onClick = {
+                                        newProdHsn = result.code
+                                        showQuickHsnDialog = false
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.Start) {
+                                        Text(result.code, fontWeight = FontWeight.Bold)
+                                        Text(result.description, fontSize = 12.sp, color = AppColors.textSecondary)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showQuickHsnDialog = false }) {
+                        Text("Close")
+                    }
+                }
+            )
+        }
     }
 }
 
@@ -4290,7 +4743,7 @@ fun StickyBottomBar(
                             colors = ButtonDefaults.buttonColors(containerColor = AppColors.primary),
                             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 0.dp)
                         ) {
-                            Icon(imageVector = Icons.Default.Assignment, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Icon(imageVector = Icons.AutoMirrored.Filled.Assignment, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("Print", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         }

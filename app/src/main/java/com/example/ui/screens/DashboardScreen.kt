@@ -13,14 +13,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Assignment
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
-import androidx.compose.material.icons.filled.Assignment
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.Receipt
-import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material3.*
@@ -134,7 +134,7 @@ fun DashboardScreen(
         sales - purchase // Gross margin approximation as profit
     }
     val lowStockProducts = remember(products) {
-        products.filter { it.currentStock <= it.lowStockThreshold }
+        products.filter { it.enableStockAlert && it.currentStock <= it.lowStockThreshold }
     }
 
     val profile by viewModel.profile.collectAsState()
@@ -359,14 +359,14 @@ fun DashboardScreen(
                 )
                 QuickActionItem(
                     label = "Reports",
-                    icon = Icons.Default.Assignment,
+                    icon = Icons.AutoMirrored.Filled.Assignment,
                     backgroundColor = Color(0xFFFFF3E0),
                     iconColor = Color(0xFFFF9800),
                     onClick = { onQuickAction("REPORTS") }
                 )
                 QuickActionItem(
                     label = "Expenses",
-                    icon = Icons.Default.TrendingUp,
+                    icon = Icons.AutoMirrored.Filled.TrendingUp,
                     backgroundColor = Color(0xFFF3E5F5),
                     iconColor = Color(0xFF9C27B0),
                     onClick = { onQuickAction("EXPENSES") }

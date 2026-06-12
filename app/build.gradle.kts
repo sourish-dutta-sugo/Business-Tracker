@@ -8,18 +8,14 @@ plugins {
 
 android {
   namespace = "com.example"
-    compileSdk {
-        version = release(36) {
-            minorApiLevel = 1
-        }
-    }
+  compileSdk = 36
 
-    defaultConfig {
+  defaultConfig {
     applicationId = "com.aistudio.retailbook.acntgp"
     minSdk = 24
-    targetSdk = 36
-    versionCode = 2
-    versionName = "2.0.0"
+    targetSdk = 35
+    versionCode = 4
+    versionName = "2.2.1"
     vectorDrawables.useSupportLibrary = true
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

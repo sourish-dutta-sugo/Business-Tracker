@@ -15,6 +15,7 @@ import com.example.data.Expense
 import com.example.data.FinancialYearUtils
 import com.example.data.LedgerAccount
 import com.example.data.LedgerEntry
+import com.example.data.JournalLine
 import com.example.data.Party
 import com.example.data.Product
 import com.example.data.ReceiptAllocation
@@ -289,6 +290,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 items = items.map { it.copy(financialYearCode = financialYear.value) },
                 partyName = partyName,
                 extras = extras
+            )
+            onSuccess()
+        }
+    }
+
+    fun saveJournalVoucher(
+        voucher: Voucher,
+        lines: List<JournalLine>,
+        onSuccess: () -> Unit
+    ) {
+        viewModelScope.launch {
+            repository.saveJournalVoucher(
+                voucher = voucher.copy(financialYearCode = financialYear.value),
+                lines = lines
             )
             onSuccess()
         }

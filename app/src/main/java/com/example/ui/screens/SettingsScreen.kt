@@ -18,18 +18,18 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Business
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.ShoppingBag
 import androidx.compose.material.icons.filled.Email
-import androidx.compose.material.icons.filled.Send
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import androidx.compose.material3.*
@@ -229,7 +229,7 @@ fun SettingsScreen(
                     navigationIcon = {
                         if (!isDesktop) {
                             IconButton(onClick = { activeSubMode = "MENU" }) {
-                                Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = AppColors.textPrimary)
+                                Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = AppColors.textPrimary)
                             }
                         }
                     },
@@ -599,7 +599,7 @@ fun SettingsScreen(
                     navigationIcon = {
                         if (!isDesktop) {
                             IconButton(onClick = { activeSubMode = "MENU" }) {
-                                Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back")
+                                Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                             }
                         }
                     },
@@ -673,7 +673,7 @@ fun SettingsScreen(
                     navigationIcon = {
                         if (!isDesktop) {
                             IconButton(onClick = { activeSubMode = "MENU" }) {
-                                Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = AppColors.textPrimary)
+                                Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = AppColors.textPrimary)
                             }
                         }
                     },
@@ -729,7 +729,7 @@ fun SettingsScreen(
                         navigationIcon = {
                             if (!isDesktop) {
                                 IconButton(onClick = { activeSubMode = "MENU" }) {
-                                    Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = AppColors.textPrimary)
+                                    Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = AppColors.textPrimary)
                                 }
                             }
                         },
@@ -799,7 +799,7 @@ fun SettingsScreen(
                     navigationIcon = {
                         if (!isDesktop) {
                             IconButton(onClick = { activeSubMode = "MENU" }) {
-                                Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = AppColors.textPrimary)
+                                Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = AppColors.textPrimary)
                             }
                         }
                     },
@@ -912,6 +912,8 @@ fun SettingsScreen(
         var smtpPassword by remember(origProfile?.smtpPassword) { mutableStateOf(origProfile?.smtpPassword.orEmpty()) }
         var smtpHost by remember(origProfile?.smtpHost) { mutableStateOf(origProfile?.smtpHost?.ifBlank { "smtp.gmail.com" } ?: "smtp.gmail.com") }
         var smtpPort by remember(origProfile?.smtpPort) { mutableStateOf(origProfile?.smtpPort?.ifBlank { "587" } ?: "587") }
+        var useCustomTemplate by remember { mutableStateOf(EmailReminderScheduler.isUsingCustomTemplate(context)) }
+        var templateText by remember { mutableStateOf(EmailReminderScheduler.loadTemplate(context)) }
         val notificationPermissionLauncher = rememberLauncherForActivityResult(
             ActivityResultContracts.RequestPermission()
         ) { granted ->
@@ -968,7 +970,7 @@ fun SettingsScreen(
                     navigationIcon = {
                         if (!isDesktop) {
                             IconButton(onClick = { activeSubMode = "MENU" }) {
-                                Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = AppColors.textPrimary)
+                                Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = AppColors.textPrimary)
                             }
                         }
                     },
@@ -1027,6 +1029,84 @@ fun SettingsScreen(
                         }
 
                         HorizontalDivider()
+
+                        Text("Email Template", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = AppColors.textSecondary)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Use custom message", fontWeight = FontWeight.SemiBold, color = AppColors.textPrimary)
+                                Text(
+                                    if (useCustomTemplate) "Your custom template will be used for reminders"
+                                    else "Default reminder preview is shown below",
+                                    fontSize = 11.sp,
+                                    color = AppColors.textSecondary
+                                )
+                            }
+                            Switch(
+                                checked = useCustomTemplate,
+                                onCheckedChange = {
+                                    useCustomTemplate = it
+                                    EmailReminderScheduler.setUseCustomTemplate(context, it)
+                                }
+                            )
+                        }
+                        OutlinedTextField(
+                            value = EmailReminderScheduler.previewTemplate(
+                                template = templateText,
+                                businessName = origProfile?.businessName.orEmpty().ifBlank { "ZeroBook" },
+                                businessPhone = origProfile?.phone.orEmpty().ifBlank { "9876543210" }
+                            ),
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Preview") },
+                            modifier = Modifier.fillMaxWidth(),
+                            minLines = 5,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = AppColors.primary,
+                                unfocusedBorderColor = AppColors.border
+                            )
+                        )
+                        if (useCustomTemplate) {
+                            OutlinedTextField(
+                                value = templateText,
+                                onValueChange = {
+                                    templateText = it
+                                    EmailReminderScheduler.saveTemplate(context, it)
+                                },
+                                label = { Text("Custom message") },
+                                modifier = Modifier.fillMaxWidth(),
+                                minLines = 6,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = AppColors.primary,
+                                    unfocusedBorderColor = AppColors.border
+                                )
+                            )
+                        }
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf(
+                                "{party_name}",
+                                "{invoice_no}",
+                                "{amount}",
+                                "{due_date}",
+                                "{outstanding}",
+                                "{business_name}",
+                                "{business_phone}"
+                            ).forEach { variable ->
+                                AssistChip(
+                                    onClick = {
+                                        templateText += if (templateText.endsWith(" ") || templateText.isBlank()) variable else " $variable"
+                                        EmailReminderScheduler.saveTemplate(context, templateText)
+                                    },
+                                    label = { Text(variable) }
+                                )
+                            }
+                        }
 
                         Text("Sender", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = AppColors.textSecondary)
                         OutlinedTextField(
@@ -1136,7 +1216,7 @@ fun SettingsScreen(
 
                         HorizontalDivider()
 
-                        Text("Individual Scheduled Reminder", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = AppColors.textSecondary)
+                        Text("Per-Party Scheduling", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = AppColors.textSecondary)
                         if (eligibleRecipients.isEmpty()) {
                             Text(
                                 "No parties currently have outstanding dues.",
@@ -1147,13 +1227,16 @@ fun SettingsScreen(
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 eligibleRecipients.forEach { recipient ->
                                     val partySchedule = individualSchedules[recipient.partyId]
+                                    var partyConfig by remember(recipient.partyId) {
+                                        mutableStateOf(EmailReminderScheduler.loadPartyReminderConfig(context, recipient.partyId))
+                                    }
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .border(1.dp, AppColors.border, RoundedCornerShape(10.dp))
                                             .padding(12.dp),
                                         horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                        verticalAlignment = Alignment.CenterVertically
+                                        verticalAlignment = Alignment.Top
                                     ) {
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(recipient.partyName, fontWeight = FontWeight.SemiBold, color = AppColors.textPrimary)
@@ -1167,6 +1250,48 @@ fun SettingsScreen(
                                                 fontSize = 11.sp,
                                                 color = AppColors.textSecondary
                                             )
+                                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                                                Text("Send on due date", fontSize = 11.sp, color = AppColors.textSecondary)
+                                                Switch(
+                                                    checked = partyConfig.sendOnDueDate,
+                                                    onCheckedChange = {
+                                                        partyConfig = partyConfig.copy(sendOnDueDate = it)
+                                                        EmailReminderScheduler.savePartyReminderConfig(context, recipient.partyId, partyConfig)
+                                                    }
+                                                )
+                                            }
+                                            OutlinedTextField(
+                                                value = partyConfig.daysBeforeDue.toString(),
+                                                onValueChange = {
+                                                    partyConfig = partyConfig.copy(daysBeforeDue = it.filter(Char::isDigit).ifBlank { "0" }.toInt())
+                                                    EmailReminderScheduler.savePartyReminderConfig(context, recipient.partyId, partyConfig)
+                                                },
+                                                label = { Text("Send X days before due date") },
+                                                modifier = Modifier.fillMaxWidth(),
+                                                singleLine = true,
+                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                                            )
+                                            OutlinedTextField(
+                                                value = partyConfig.remindAfterDueEveryDays.toString(),
+                                                onValueChange = {
+                                                    partyConfig = partyConfig.copy(remindAfterDueEveryDays = it.filter(Char::isDigit).ifBlank { "1" }.toInt())
+                                                    EmailReminderScheduler.savePartyReminderConfig(context, recipient.partyId, partyConfig)
+                                                },
+                                                label = { Text("Send reminder every X days after due") },
+                                                modifier = Modifier.fillMaxWidth(),
+                                                singleLine = true,
+                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                                            )
+                                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                                                Text("Until paid", fontSize = 11.sp, color = AppColors.textSecondary)
+                                                Switch(
+                                                    checked = partyConfig.untilPaid,
+                                                    onCheckedChange = {
+                                                        partyConfig = partyConfig.copy(untilPaid = it)
+                                                        EmailReminderScheduler.savePartyReminderConfig(context, recipient.partyId, partyConfig)
+                                                    }
+                                                )
+                                            }
                                         }
                                         Column(horizontalAlignment = Alignment.End) {
                                             Text(
@@ -1177,40 +1302,37 @@ fun SettingsScreen(
                                             )
                                             TextButton(
                                                 onClick = {
-                                                    val calendar = Calendar.getInstance()
-                                                    DatePickerDialog(
-                                                        context,
-                                                        { _, year, month, dayOfMonth ->
-                                                            TimePickerDialog(
-                                                                context,
-                                                                { _, hourOfDay, minute ->
-                                                                    EmailReminderScheduler.scheduleIndividualReminder(
-                                                                        context = context,
-                                                                        partyId = recipient.partyId,
-                                                                        partyName = recipient.partyName,
-                                                                        scheduledAt = LocalDateTime.of(
-                                                                            year,
-                                                                            month + 1,
-                                                                            dayOfMonth,
-                                                                            hourOfDay,
-                                                                            minute
-                                                                        )
-                                                                    )
-                                                                    refreshSchedulesToken++
-                                                                    Toast.makeText(context, "Reminder set for ${recipient.partyName}", Toast.LENGTH_SHORT).show()
-                                                                },
-                                                                calendar.get(Calendar.HOUR_OF_DAY),
-                                                                calendar.get(Calendar.MINUTE),
-                                                                false
-                                                            ).show()
-                                                        },
-                                                        calendar.get(Calendar.YEAR),
-                                                        calendar.get(Calendar.MONTH),
-                                                        calendar.get(Calendar.DAY_OF_MONTH)
-                                                    ).show()
+                                                    val partyBills = bills.filter { it.partyId == recipient.partyId && it.outstandingAmount > 0.0 }
+                                                    val parsedTime = runCatching { LocalTime.parse(recurringTime24h) }.getOrDefault(LocalTime.of(9, 0))
+                                                    EmailReminderScheduler.schedulePartyPlan(
+                                                        context = context,
+                                                        partyId = recipient.partyId,
+                                                        partyName = recipient.partyName,
+                                                        bills = partyBills,
+                                                        config = partyConfig,
+                                                        sendTime = parsedTime
+                                                    )
+                                                    refreshSchedulesToken++
+                                                    Toast.makeText(context, "Schedule saved for ${recipient.partyName}", Toast.LENGTH_SHORT).show()
                                                 }
                                             ) {
-                                                Text("Schedule Reminder", color = AppColors.primary)
+                                                Text("Save schedule", color = AppColors.primary)
+                                            }
+                                            TextButton(
+                                                onClick = {
+                                                    scope.launch {
+                                                        val result = withContext(Dispatchers.IO) {
+                                                            EmailReminderScheduler.sendNowForParty(context, recipient.partyId)
+                                                        }
+                                                        Toast.makeText(
+                                                            context,
+                                                            if (result.isSuccess) "Mail app opened for ${recipient.partyName}" else "Send now failed: ${result.exceptionOrNull()?.message}",
+                                                            Toast.LENGTH_SHORT
+                                                        ).show()
+                                                    }
+                                                }
+                                            ) {
+                                                Text("Send now", color = AppColors.primary)
                                             }
                                         }
                                     }
@@ -1266,6 +1388,26 @@ fun SettingsScreen(
                                 }
                             }
                         )
+
+                        Text("Reminder frequency after overdue", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = AppColors.textSecondary)
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf(
+                                "Daily" to 1,
+                                "Every 3 days" to 3,
+                                "Weekly" to 7,
+                                "Every 15 days" to 15,
+                                "Monthly" to 30
+                            ).forEach { (label, interval) ->
+                                FilterChip(
+                                    selected = recurringIntervalDays == interval,
+                                    onClick = { recurringIntervalDays = interval },
+                                    label = { Text(label) }
+                                )
+                            }
+                        }
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -1355,7 +1497,7 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Running reminders...", color = Color.White)
                     } else {
-                        Icon(imageVector = Icons.Default.Send, contentDescription = null, modifier = Modifier.padding(end = 4.dp))
+                        Icon(imageVector = Icons.AutoMirrored.Filled.Send, contentDescription = null, modifier = Modifier.padding(end = 4.dp))
                         Text("Run Reminder Now", fontWeight = FontWeight.Bold, color = Color.White)
                     }
                 }
@@ -1455,7 +1597,7 @@ fun SettingsScreen(
                         title = { Text("Application Settings", fontWeight = FontWeight.Bold, color = AppColors.textPrimary) },
                         navigationIcon = {
                             IconButton(onClick = onNavigateBack) {
-                                Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = AppColors.textPrimary)
+                                Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = AppColors.textPrimary)
                             }
                         },
                         colors = TopAppBarDefaults.topAppBarColors(containerColor = AppColors.cardBg)
@@ -1658,7 +1800,7 @@ fun SettingsMenuCard(
                 }
             }
             Icon(
-                imageVector = Icons.Default.KeyboardArrowRight,
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                 contentDescription = null,
                 tint = AppColors.textTertiary,
                 modifier = Modifier.size(20.dp)

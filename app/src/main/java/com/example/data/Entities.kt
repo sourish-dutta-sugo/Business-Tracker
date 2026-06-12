@@ -112,6 +112,8 @@ data class Product(
     val openingStock: Double,
     @ColumnInfo(name = "current_stock")
     val currentStock: Double = 0.0,
+    @ColumnInfo(name = "enable_stock_alert")
+    val enableStockAlert: Boolean = false,
     @ColumnInfo(name = "low_stock_threshold")
     val lowStockThreshold: Double = 5.0,
     @ColumnInfo(name = "stock_unit")
@@ -209,6 +211,12 @@ data class AdditionalCharge(
     val isTaxable: Boolean,
     val gstRate: Double,
     val gstAmount: Double
+)
+
+data class JournalLine(
+    val accountHead: String,
+    val debit: Double,
+    val credit: Double
 )
 
 @Entity(tableName = "ledger_entries")

@@ -27,7 +27,7 @@ import com.example.ui.theme.Colors
 fun ProductOptionalFields(
     hsnCode: String,
     onHsnChange: (String) -> Unit,
-    onAutoDetectHsn: () -> Unit,
+    onFindHsn: () -> Unit,
     batchEnabled: Boolean,
     onBatchEnabledChange: (Boolean) -> Unit,
     batchNumber: String,
@@ -63,8 +63,8 @@ fun ProductOptionalFields(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.End
     ) {
-        OutlinedButton(onClick = onAutoDetectHsn) {
-            Text("Auto-detect HSN")
+        OutlinedButton(onClick = onFindHsn) {
+            Text("Find HSN")
         }
     }
     Spacer(Modifier.height(12.dp))

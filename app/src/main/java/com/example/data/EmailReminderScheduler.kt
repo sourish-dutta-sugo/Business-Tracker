@@ -19,6 +19,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import com.example.services.EmailComposer
 import com.example.services.InvoiceGenerator
 import java.text.DecimalFormat
 import java.text.SimpleDateFormat
@@ -48,8 +49,23 @@ private const val REMINDER_PREFS = "zerobook_pref"
 private const val KEY_LOGS = "email_logs_list"
 private const val KEY_SELECTED_RECIPIENTS = "email_selected_recipients"
 private const val KEY_SCHEDULED_AT = "email_scheduled_at"
+private const val KEY_USE_CUSTOM_TEMPLATE = "email_use_custom_template"
+private const val KEY_CUSTOM_TEMPLATE = "email_custom_template"
 private const val UNIVERSAL_WORK_NAME = "universal_reminder"
 private const val DUE_REMINDER_CHANNEL_ID = "payment_due_reminders"
+
+private const val DEFAULT_TEMPLATE = """
+Dear {party_name},
+
+This is a reminder for invoice {invoice_no}.
+Amount due: {amount}
+Due date: {due_date}
+Outstanding total: {outstanding}
+
+Regards,
+{business_name}
+{business_phone}
+"""
 
 data class ReminderRecipientUi(
     val partyId: String,
@@ -71,7 +87,76 @@ data class ReminderSchedule(
     val createdAt: Long
 )
 
+data class PartyReminderConfig(
+    val sendOnDueDate: Boolean = true,
+    val daysBeforeDue: Int = 3,
+    val remindAfterDueEveryDays: Int = 7,
+    val untilPaid: Boolean = true
+)
+
 object EmailReminderScheduler {
+    fun isUsingCustomTemplate(context: Context): Boolean =
+        context.getSharedPreferences(REMINDER_PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_USE_CUSTOM_TEMPLATE, false)
+
+    fun setUseCustomTemplate(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(REMINDER_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_USE_CUSTOM_TEMPLATE, enabled)
+            .apply()
+    }
+
+    fun loadTemplate(context: Context): String =
+        context.getSharedPreferences(REMINDER_PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_CUSTOM_TEMPLATE, DEFAULT_TEMPLATE)
+            .orEmpty()
+            .ifBlank { DEFAULT_TEMPLATE }
+
+    fun saveTemplate(context: Context, template: String) {
+        context.getSharedPreferences(REMINDER_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_CUSTOM_TEMPLATE, template.ifBlank { DEFAULT_TEMPLATE })
+            .apply()
+    }
+
+    fun loadPartyReminderConfig(context: Context, partyId: String): PartyReminderConfig {
+        val prefs = context.getSharedPreferences(REMINDER_PREFS, Context.MODE_PRIVATE)
+        return PartyReminderConfig(
+            sendOnDueDate = prefs.getBoolean("party_due_$partyId", true),
+            daysBeforeDue = prefs.getInt("party_before_$partyId", 3),
+            remindAfterDueEveryDays = prefs.getInt("party_after_$partyId", 7),
+            untilPaid = prefs.getBoolean("party_until_$partyId", true)
+        )
+    }
+
+    fun savePartyReminderConfig(context: Context, partyId: String, config: PartyReminderConfig) {
+        context.getSharedPreferences(REMINDER_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean("party_due_$partyId", config.sendOnDueDate)
+            .putInt("party_before_$partyId", config.daysBeforeDue)
+            .putInt("party_after_$partyId", config.remindAfterDueEveryDays)
+            .putBoolean("party_until_$partyId", config.untilPaid)
+            .apply()
+    }
+
+    fun previewTemplate(
+        template: String = DEFAULT_TEMPLATE,
+        partyName: String = "Agarwal Traders",
+        invoiceNo: String = "SAL/2026-27/0001",
+        amount: String = "Rs 5,000.00",
+        dueDate: String = "15-Jun-2026",
+        outstanding: String = "Rs 8,500.00",
+        businessName: String = "ZeroBook",
+        businessPhone: String = "9876543210"
+    ): String = template
+        .replace("{party_name}", partyName)
+        .replace("{invoice_no}", invoiceNo)
+        .replace("{amount}", amount)
+        .replace("{due_date}", dueDate)
+        .replace("{outstanding}", outstanding)
+        .replace("{business_name}", businessName)
+        .replace("{business_phone}", businessPhone)
+
     fun scheduleDueReminder(
         context: Context,
         voucherId: String,
@@ -117,6 +202,133 @@ object EmailReminderScheduler {
                 warningRequest
             )
         }
+    }
+
+    fun schedulePartyPlan(
+        context: Context,
+        partyId: String,
+        partyName: String,
+        bills: List<BillReceivable>,
+        config: PartyReminderConfig,
+        sendTime: LocalTime
+    ) {
+        savePartyReminderConfig(context, partyId, config)
+        val dueFormat = SimpleDateFormat("dd-MMM-yyyy", Locale.ENGLISH)
+        bills.filter { it.outstandingAmount > 0.0 }.forEach { bill ->
+            val dueDateMillis = bill.dueDate ?: return@forEach
+            val dueDate = LocalDateTime.ofInstant(
+                java.time.Instant.ofEpochMilli(dueDateMillis),
+                ZoneId.systemDefault()
+            )
+            if (config.sendOnDueDate) {
+                scheduleIndividualReminder(
+                    context = context,
+                    partyId = partyId,
+                    partyName = partyName,
+                    scheduledAt = dueDate.toLocalDate().atTime(sendTime)
+                )
+            }
+            val beforeDate = dueDate.toLocalDate().minusDays(config.daysBeforeDue.toLong()).atTime(sendTime)
+            if (beforeDate.isAfter(LocalDateTime.now())) {
+                scheduleIndividualReminder(
+                    context = context,
+                    partyId = partyId,
+                    partyName = partyName,
+                    scheduledAt = beforeDate
+                )
+            }
+            if (config.untilPaid) {
+                scheduleRecurringReminderForParty(
+                    context = context,
+                    partyId = partyId,
+                    partyName = partyName,
+                    intervalDays = config.remindAfterDueEveryDays.coerceAtLeast(1),
+                    sendTime = sendTime,
+                    firstDate = dueDate.toLocalDate().plusDays(config.remindAfterDueEveryDays.toLong())
+                )
+            }
+        }
+    }
+
+    fun scheduleRecurringReminderForParty(
+        context: Context,
+        partyId: String,
+        partyName: String,
+        intervalDays: Int,
+        sendTime: LocalTime,
+        firstDate: LocalDate
+    ) {
+        val uniqueName = "party_overdue_$partyId"
+        val firstRun = firstDate.atTime(sendTime).let { if (it.isAfter(LocalDateTime.now())) it else LocalDateTime.now().plusDays(1) }
+        val initialDelayMillis = Duration.between(LocalDateTime.now(), firstRun).toMillis().coerceAtLeast(0L)
+        val request = PeriodicWorkRequestBuilder<ReminderWorker>(intervalDays.toLong(), TimeUnit.DAYS)
+            .setInitialDelay(initialDelayMillis, TimeUnit.MILLISECONDS)
+            .setInputData(
+                workDataOf(
+                    "party_id" to partyId,
+                    "schedule_id" to uniqueName,
+                    "reminder_type" to "RECURRING"
+                )
+            )
+            .build()
+        WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+            uniqueName,
+            ExistingPeriodicWorkPolicy.REPLACE,
+            request
+        )
+        upsertSchedule(
+            context,
+            ReminderSchedule(
+                id = uniqueName,
+                partyId = partyId,
+                partyName = partyName,
+                reminderType = "RECURRING",
+                scheduledDate = firstRun.toLocalDate().toString(),
+                scheduledTime = sendTime.toString(),
+                intervalDays = intervalDays,
+                isActive = true,
+                lastSent = "",
+                createdAt = System.currentTimeMillis()
+            )
+        )
+    }
+
+    suspend fun sendNowForParty(context: Context, partyId: String): Result<Unit> {
+        val db = AppDatabase.getDatabase(context)
+        val profile = db.businessProfileDao().getProfileSync() ?: return Result.failure(IllegalStateException("Business profile not found"))
+        val party = db.partyDao().getPartyById(partyId) ?: return Result.failure(IllegalStateException("Party not found"))
+        val bills = db.billReceivableDao().getAllBillsSync(profile.fyLabel)
+            .filter { it.partyId == partyId && it.outstandingAmount > 0.0 }
+        if (bills.isEmpty()) return Result.failure(IllegalStateException("No outstanding bills found"))
+        val latestBill = bills.maxByOrNull { it.billDate }
+        val attachment = latestBill?.voucherId?.let { voucherId ->
+            runCatching {
+                val bundle = InvoiceGenerator.buildRenderBundle(context, voucherId) ?: return@runCatching null
+                val pdf = InvoiceGenerator.renderBundleToPdf(context, bundle)
+                FileProvider.getUriForFile(context, context.packageName + ".provider", pdf)
+            }.getOrNull()
+        }
+        val firstBill = bills.first()
+        val body = previewTemplate(
+            template = loadTemplate(context),
+            partyName = party.name,
+            invoiceNo = firstBill.voucherNo.orEmpty(),
+            amount = Utils.formatIndianCurrency(firstBill.outstandingAmount),
+            dueDate = firstBill.dueDate?.let { SimpleDateFormat("dd-MMM-yyyy", Locale.ENGLISH).format(Date(it)) }.orEmpty(),
+            outstanding = Utils.formatIndianCurrency(bills.sumOf { it.outstandingAmount }),
+            businessName = profile.businessName,
+            businessPhone = profile.phone
+        )
+        EmailComposer.compose(
+            context = context,
+            draft = EmailComposer.Draft(
+                recipients = listOf(party.email),
+                subject = "Payment reminder from ${profile.businessName}",
+                body = body,
+                attachments = listOfNotNull(attachment)
+            )
+        )
+        return Result.success(Unit)
     }
 
     suspend fun sendTestEmail(
@@ -367,6 +579,7 @@ object EmailReminderScheduler {
             val party = db.partyDao().getPartyById(duePartyId) ?: return@forEach
             val recipientEmail = party.email.trim()
             val body = buildReminderBody(
+                context = context,
                 partyName = party.name,
                 bills = bills,
                 businessName = businessName,
@@ -396,6 +609,7 @@ object EmailReminderScheduler {
     }
 
     private fun buildReminderBody(
+        context: Context,
         partyName: String,
         bills: List<BillReceivable>,
         businessName: String,
@@ -408,16 +622,16 @@ object EmailReminderScheduler {
             "Invoice ${bill.voucherNo.orEmpty()} dated $invoiceDate - Due ${Utils.formatIndianCurrency(bill.outstandingAmount)}"
         }
         val totalDue = bills.sumOf { it.outstandingAmount }
-        return buildString {
-            append("Dear $partyName,\n\n")
-            append("This is a reminder for the following outstanding invoices:\n")
-            append(invoiceLines)
-            append("\n\nTotal Due Amount: ${Utils.formatIndianCurrency(totalDue)}\n\n")
-            append("Regards,\n")
-            append(businessName)
-            if (businessPhone.isNotBlank()) append("\nContact: $businessPhone")
-            if (businessEmail.isNotBlank()) append("\nEmail: $businessEmail")
-        }
+        return previewTemplate(
+            template = loadTemplate(context),
+            partyName = partyName,
+            invoiceNo = bills.firstOrNull()?.voucherNo.orEmpty(),
+            amount = bills.firstOrNull()?.outstandingAmount?.let(Utils::formatIndianCurrency).orEmpty(),
+            dueDate = bills.firstOrNull()?.dueDate?.let { dateFormat.format(Date(it)) }.orEmpty(),
+            outstanding = Utils.formatIndianCurrency(totalDue),
+            businessName = businessName,
+            businessPhone = businessPhone
+        ) + "\n\nOutstanding invoices:\n$invoiceLines" + if (businessEmail.isNotBlank()) "\n\nEmail: $businessEmail" else ""
     }
 
     private fun upsertSchedule(context: Context, schedule: ReminderSchedule) {
@@ -429,7 +643,7 @@ object EmailReminderScheduler {
                 interval_days, is_active, last_sent, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """.trimIndent(),
-            arrayOf(
+            arrayOf<Any?>(
                 schedule.id,
                 schedule.partyId,
                 schedule.partyName,
@@ -453,7 +667,7 @@ object EmailReminderScheduler {
             SET last_sent = ?, is_active = ?
             WHERE id = ?
             """.trimIndent(),
-            arrayOf(
+            arrayOf<Any?>(
                 LocalDateTime.now().toString(),
                 if (active) 1 else 0,
                 scheduleId

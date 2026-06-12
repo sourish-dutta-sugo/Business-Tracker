@@ -170,7 +170,7 @@ fun SetupScreen(
                     )
                 }
 
-                Divider(color = AppColors.divider, modifier = Modifier.padding(vertical = 4.dp))
+                HorizontalDivider(color = AppColors.divider, modifier = Modifier.padding(vertical = 4.dp))
 
                 Text(
                     text = "Business Profile Information",

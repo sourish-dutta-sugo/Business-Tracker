@@ -14,6 +14,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Assignment
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.TrendingDown
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -389,7 +394,7 @@ fun ReportsScreen(
                         title = { Text("Regulatory Financial Books & GST Reports", fontWeight = FontWeight.Black, color = AppColors.textPrimary) },
                         navigationIcon = {
                             IconButton(onClick = onNavigateBack) {
-                                Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = AppColors.textPrimary)
+                                Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = AppColors.textPrimary)
                             }
                         },
                         colors = TopAppBarDefaults.topAppBarColors(containerColor = AppColors.cardBg)
@@ -422,7 +427,7 @@ fun ReportsScreen(
                     ReportMenuCard(
                         title = "Profit & Loss Account",
                         description = "View real double-entry Trading (Gross GP) and P&L statements side-by-side",
-                        icon = Icons.Default.Assignment,
+                        icon = Icons.AutoMirrored.Filled.Assignment,
                         onClick = { activeReport = "PL" }
                     )
 
@@ -443,14 +448,14 @@ fun ReportsScreen(
                     ReportMenuCard(
                         title = "Outstanding Receivables (Email automation)",
                         description = "Client outstanding report with automated invoice reminders",
-                        icon = Icons.Default.TrendingUp,
+                        icon = Icons.AutoMirrored.Filled.TrendingUp,
                         onClick = { activeReport = "RECEIVABLES" }
                     )
 
                     ReportMenuCard(
                         title = "Outstanding Payables",
                         description = "Supplier credits outstanding ledger status",
-                        icon = Icons.Default.TrendingDown,
+                        icon = Icons.AutoMirrored.Filled.TrendingDown,
                         onClick = { activeReport = "PAYABLES" }
                     )
 
@@ -507,7 +512,7 @@ fun ReportsScreen(
                         },
                         navigationIcon = {
                             IconButton(onClick = { activeReport = "MENU" }) {
-                                Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = AppColors.textPrimary)
+                                Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = AppColors.textPrimary)
                             }
                         },
                         colors = TopAppBarDefaults.topAppBarColors(containerColor = AppColors.cardBg)
@@ -851,7 +856,7 @@ fun TrialBalanceView(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
-                    imageVector = if (isExpanded) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowRight,
+                    imageVector = if (isExpanded) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
                     contentDescription = null,
                     tint = AppColors.primaryText,
                     modifier = Modifier.size(16.dp)
@@ -1735,7 +1740,7 @@ fun ReportMenuCard(
                 )
             }
             Icon(
-                imageVector = Icons.Default.KeyboardArrowRight,
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                 contentDescription = null,
                 tint = AppColors.textTertiary,
                 modifier = Modifier.size(20.dp)
