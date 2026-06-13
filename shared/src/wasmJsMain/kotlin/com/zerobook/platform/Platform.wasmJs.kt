@@ -38,3 +38,20 @@ actual class PlatformFileSaver {
         return fileName
     }
 }
+
+@JsName("triggerFileInput")
+external fun triggerFileInput(
+    accept: String,
+    onSelected: (String) -> Unit,
+)
+
+actual class PlatformFilePicker {
+    actual fun pickFile(
+        accept: String,
+        onSelected: (ByteArray, String) -> Unit,
+    ) {
+        triggerFileInput(accept) { encodedContent ->
+            onSelected(encodedContent.encodeToByteArray(), "selected-file")
+        }
+    }
+}

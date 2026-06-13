@@ -36,3 +36,10 @@ actual class PlatformFileSaver {
         return target.absolutePath
     }
 }
+
+actual class PlatformFilePicker {
+    actual fun pickFile(
+        accept: String,
+        onSelected: (ByteArray, String) -> Unit,
+    ) = Unit
+}

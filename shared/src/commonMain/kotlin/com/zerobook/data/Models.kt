@@ -61,3 +61,29 @@ data class ZeroBookSnapshot(
     val expenses: List<Expense>,
     val metrics: List<DashboardMetric>,
 )
+
+fun emptyZeroBookSnapshot(): ZeroBookSnapshot = ZeroBookSnapshot(
+    profile = BusinessProfile(
+        businessName = "",
+        ownerName = "",
+        city = "",
+        state = "",
+        phone = "",
+        email = "",
+        fyLabel = "",
+    ),
+    parties = emptyList(),
+    products = emptyList(),
+    vouchers = emptyList(),
+    expenses = emptyList(),
+    metrics = listOf(
+        DashboardMetric("Sales Today", "₹0.00", "No entries yet"),
+        DashboardMetric("Purchases", "₹0.00", "No entries yet"),
+        DashboardMetric("Receivable", "₹0.00", "No entries yet"),
+        DashboardMetric("Payable", "₹0.00", "No entries yet"),
+        DashboardMetric("Cash", "₹0.00", "No entries yet"),
+        DashboardMetric("Bank", "₹0.00", "No entries yet"),
+        DashboardMetric("GST Liability", "₹0.00", "No entries yet"),
+        DashboardMetric("Profit", "₹0.00", "No entries yet"),
+    ),
+)

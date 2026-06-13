@@ -22,6 +22,13 @@ expect class PlatformFileSaver() {
     ): String
 }
 
+expect class PlatformFilePicker() {
+    fun pickFile(
+        accept: String,
+        onSelected: (ByteArray, String) -> Unit,
+    )
+}
+
 @Composable
 fun FallbackHtmlSource(
     html: String,

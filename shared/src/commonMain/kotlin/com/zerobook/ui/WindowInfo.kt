@@ -3,6 +3,7 @@ package com.zerobook.ui
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -15,6 +16,32 @@ data class AppWindowInfo(
     val heightDp: Dp,
 ) {
     val isDesktopLike: Boolean = windowType == WindowType.DESKTOP
+}
+
+@Composable
+fun rememberWindowInfo(): AppWindowInfo {
+    var info = remember {
+        AppWindowInfo(
+            windowType = WindowType.DESKTOP,
+            widthDp = 840.dp,
+            heightDp = 600.dp,
+        )
+    }
+
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val windowType = when {
+            maxWidth >= 840.dp -> WindowType.DESKTOP
+            maxWidth >= 600.dp -> WindowType.TABLET
+            else -> WindowType.PHONE
+        }
+        info = AppWindowInfo(
+            windowType = windowType,
+            widthDp = maxWidth,
+            heightDp = maxHeight,
+        )
+    }
+
+    return info
 }
 
 @Composable

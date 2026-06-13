@@ -11,23 +11,21 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
-import androidx.compose.material.icons.outlined.AccountBalance
 import androidx.compose.material.icons.outlined.BarChart
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Inventory2
 import androidx.compose.material.icons.outlined.People
-import androidx.compose.material.icons.outlined.ReceiptLong
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -63,23 +61,25 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.zerobook.data.DashboardMetric
-import com.zerobook.data.Expense
 import com.zerobook.data.Party
 import com.zerobook.data.Product
-import com.zerobook.data.SampleData
 import com.zerobook.data.Voucher
 import com.zerobook.data.ZeroBookSnapshot
+import com.zerobook.data.emptyZeroBookSnapshot
+import com.zerobook.database.bootstrapDatabase
+import com.zerobook.database.openZeroBookDatabase
+import com.zerobook.ui.rememberWindowInfo
 
 enum class ZeroBookScreen(
     val label: String,
     val shortcut: String,
 ) {
-    Dashboard("Dashboard", "Alt+1"),
-    Vouchers("Vouchers", "Alt+2"),
-    Parties("Parties", "Alt+3"),
-    Products("Products", "Alt+4"),
-    Reports("Reports", "Alt+5"),
-    Settings("Settings", "Alt+6"),
+    Dashboard("Dashboard", "1"),
+    Vouchers("Vouchers", "2"),
+    Parties("Parties", "3"),
+    Products("Products", "4"),
+    Reports("Reports", "5"),
+    Settings("Settings", "6"),
 }
 
 private data class NavItem(
@@ -103,9 +103,6 @@ private fun shortcutDestination(key: Key): ZeroBookScreen? = when (key) {
     Key.Four -> ZeroBookScreen.Products
     Key.Five -> ZeroBookScreen.Reports
     Key.Six -> ZeroBookScreen.Settings
-    Key.S -> ZeroBookScreen.Vouchers
-    Key.P -> ZeroBookScreen.Products
-    Key.R -> ZeroBookScreen.Reports
     else -> null
 }
 
@@ -136,13 +133,16 @@ fun handleShortcut(
 
 @Composable
 fun App(platform: String = "android") {
-    val snapshot = remember { SampleData.snapshot() }
+    remember {
+        bootstrapDatabase(openZeroBookDatabase())
+    }
+    val snapshot = remember { emptyZeroBookSnapshot() }
     val isDesktop = platform == "desktop"
     val backStack = remember { mutableStateListOf<ZeroBookScreen>() }
     var screen by remember { mutableStateOf(ZeroBookScreen.Dashboard) }
 
     MaterialTheme {
-        Surface(color = Color(0xFFFFF6EE), modifier = Modifier.fillMaxSize()) {
+        Surface(color = Color(0xFFFDF6EC), modifier = Modifier.fillMaxSize()) {
             val shortcutModifier = Modifier.onPreviewKeyEvent { event ->
                 handleShortcut(
                     event = event,
@@ -156,10 +156,10 @@ fun App(platform: String = "android") {
                 Row(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Color(0xFFFFF6EE))
+                        .background(Color(0xFFFDF6EC))
                         .then(shortcutModifier),
                 ) {
-                    DesktopRail(
+                    DesktopSidebar(
                         current = screen,
                         onNavigate = { destination ->
                             if (destination != screen) {
@@ -179,7 +179,7 @@ fun App(platform: String = "android") {
                 }
             } else {
                 Scaffold(
-                    containerColor = Color(0xFFFFF6EE),
+                    containerColor = Color(0xFFFDF6EC),
                     modifier = shortcutModifier,
                     bottomBar = {
                         NavigationBar(containerColor = Color(0xFFFFE8D2)) {
@@ -213,19 +213,21 @@ fun App(platform: String = "android") {
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Suppress("DEPRECATION")
 @Composable
-private fun DesktopRail(
+private fun DesktopSidebar(
     current: ZeroBookScreen,
     onNavigate: (ZeroBookScreen) -> Unit,
 ) {
+    val windowInfo = rememberWindowInfo()
+    val sidebarExpanded = windowInfo.widthDp >= 840.dp
+
     NavigationRail(
-        modifier = Modifier.width(72.dp),
+        modifier = Modifier.width(if (sidebarExpanded) 240.dp else 60.dp),
         containerColor = Color(0xFFFFE8D2),
     ) {
         Spacer(Modifier.height(12.dp))
         Text(
-            text = "ZB",
+            text = if (sidebarExpanded) "ZeroBook" else "ZB",
             color = Color(0xFF8C4E24),
             fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(bottom = 20.dp),
@@ -235,7 +237,7 @@ private fun DesktopRail(
                 positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
                 tooltip = {
                     PlainTooltip {
-                        Text("${item.screen.label} (${item.screen.shortcut})")
+                        Text("${item.screen.label}  (Alt+${item.screen.shortcut})")
                     }
                 },
                 state = rememberTooltipState(),
@@ -250,7 +252,12 @@ private fun DesktopRail(
                             modifier = Modifier.size(22.dp),
                         )
                     },
-                    label = null,
+                    label = if (sidebarExpanded) {
+                        { Text(item.screen.label) }
+                    } else {
+                        null
+                    },
+                    alwaysShowLabel = sidebarExpanded,
                 )
             }
         }
@@ -278,14 +285,18 @@ private fun DashboardScreen(snapshot: ZeroBookSnapshot) {
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(24.dp),
+            .padding(24.dp)
+            .imePadding(),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("Dashboard", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Color(0xFF8C4E24))
                 Text(
-                    "${snapshot.profile.businessName} • ${snapshot.profile.city}, ${snapshot.profile.state}",
+                    listOf(snapshot.profile.businessName, snapshot.profile.fyLabel)
+                        .filter { it.isNotBlank() }
+                        .joinToString(" • ")
+                        .ifBlank { "No business profile saved" },
                     color = Color(0xFF8D6B55),
                 )
             }
@@ -302,25 +313,18 @@ private fun DashboardScreen(snapshot: ZeroBookSnapshot) {
             }
         }
         item {
-            SectionCard(title = "Recent Vouchers") {
-                snapshot.vouchers.forEach { voucher ->
-                    TwoLineRow(
-                        title = "${voucher.voucherNo} • ${voucher.partyName}",
-                        subtitle = "${voucher.type} • ${voucher.dateLabel}",
-                        trailing = "Rs ${voucher.netAmount.toInt()}",
-                    )
-                }
+            SectionCard(title = "Sales vs Purchases") {
+                EmptyState("Chart will appear after vouchers are posted")
             }
         }
         item {
-            SectionCard(title = "Expenses Overview") {
-                snapshot.expenses.forEach { expense ->
-                    TwoLineRow(
-                        title = expense.category,
-                        subtitle = "${expense.description} • ${expense.dateLabel}",
-                        trailing = "Rs ${expense.amount.toInt()}",
-                    )
-                }
+            SectionCard(title = "Cash Flow") {
+                EmptyState("30 day cash flow appears after transactions are saved")
+            }
+        }
+        item {
+            SectionCard(title = "Recent Transactions") {
+                EmptyState("No transactions yet")
             }
         }
     }
@@ -346,12 +350,16 @@ private fun VouchersScreen(vouchers: List<Voucher>) {
         title = "Vouchers",
         subtitle = "Sales, purchases, receipts, and invoice activity",
     ) {
-        vouchers.forEach { voucher ->
-            TwoLineRow(
-                title = voucher.voucherNo,
-                subtitle = "${voucher.partyName} • ${voucher.type} • ${voucher.status}",
-                trailing = "Rs ${voucher.netAmount.toInt()}",
-            )
+        if (vouchers.isEmpty()) {
+            EmptyState("No vouchers yet")
+        } else {
+            vouchers.forEach { voucher ->
+                TwoLineRow(
+                    title = voucher.voucherNo,
+                    subtitle = "${voucher.partyName} • ${voucher.type} • ${voucher.status}",
+                    trailing = formatAmount(voucher.netAmount),
+                )
+            }
         }
     }
 }
@@ -362,12 +370,16 @@ private fun PartiesScreen(parties: List<Party>) {
         title = "Parties",
         subtitle = "Customers and suppliers with live balances",
     ) {
-        parties.forEach { party ->
-            TwoLineRow(
-                title = party.name,
-                subtitle = "${party.type} • ${party.city} • ${party.phone}",
-                trailing = "${party.balanceType} Rs ${party.balance.toInt()}",
-            )
+        if (parties.isEmpty()) {
+            EmptyState("No parties yet")
+        } else {
+            parties.forEach { party ->
+                TwoLineRow(
+                    title = party.name,
+                    subtitle = "${party.type} • ${party.city} • ${party.phone}",
+                    trailing = "${party.balanceType} ${formatAmount(party.balance)}",
+                )
+            }
         }
     }
 }
@@ -378,12 +390,16 @@ private fun ProductsScreen(products: List<Product>) {
         title = "Products",
         subtitle = "Rates, stock, and GST setup",
     ) {
-        products.forEach { product ->
-            TwoLineRow(
-                title = product.name,
-                subtitle = "${product.unit} • GST ${product.gstRate.toInt()}% • Stock ${product.currentStock}",
-                trailing = "Rs ${product.saleRate.toInt()}",
-            )
+        if (products.isEmpty()) {
+            EmptyState("No products yet")
+        } else {
+            products.forEach { product ->
+                TwoLineRow(
+                    title = product.name,
+                    subtitle = "${product.unit} • GST ${product.gstRate.toInt()}% • Stock ${product.currentStock}",
+                    trailing = formatAmount(product.saleRate),
+                )
+            }
         }
     }
 }
@@ -411,11 +427,11 @@ private fun SettingsScreen(snapshot: ZeroBookSnapshot) {
         subtitle = "Business profile, communication, and compliance defaults",
     ) {
         val profile = snapshot.profile
-        TwoLineRow("Business Name", profile.businessName, "")
-        TwoLineRow("Owner", profile.ownerName, "")
-        TwoLineRow("Phone", profile.phone, "")
-        TwoLineRow("Email", profile.email, "")
-        TwoLineRow("Financial Year", profile.fyLabel, "")
+        TwoLineRow("Business Name", profile.businessName.ifBlank { "Not set" }, "")
+        TwoLineRow("Owner", profile.ownerName.ifBlank { "Not set" }, "")
+        TwoLineRow("Phone", profile.phone.ifBlank { "Not set" }, "")
+        TwoLineRow("Email", profile.email.ifBlank { "Not set" }, "")
+        TwoLineRow("Financial Year", profile.fyLabel.ifBlank { "Not set" }, "")
     }
 }
 
@@ -428,7 +444,8 @@ private fun CollectionScreen(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(24.dp),
+            .padding(24.dp)
+            .imePadding(),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
         item {
@@ -464,6 +481,11 @@ private fun SectionCard(
 }
 
 @Composable
+private fun EmptyState(message: String) {
+    Text(message, color = Color(0xFF8D6B55))
+}
+
+@Composable
 private fun TwoLineRow(
     title: String,
     subtitle: String,
@@ -485,4 +507,28 @@ private fun TwoLineRow(
             Text(trailing, color = Color(0xFF8C4E24), fontWeight = FontWeight.SemiBold)
         }
     }
+}
+
+private fun formatAmount(value: Double): String {
+    val rounded = kotlin.math.round(value * 100.0) / 100.0
+    val sign = if (rounded < 0) "-" else ""
+    val absoluteText = kotlin.math.abs(rounded).toString()
+    val parts = absoluteText.split(".")
+    val whole = parts.firstOrNull().orEmpty()
+    val decimals = parts.getOrNull(1).orEmpty().padEnd(2, '0').take(2)
+    return "$sign₹${formatIndianDigits(whole)}.$decimals"
+}
+
+private fun formatIndianDigits(value: String): String {
+    if (value.length <= 3) return value
+    val lastThree = value.takeLast(3)
+    val remaining = value.dropLast(3)
+    val grouped = remaining
+        .reversed()
+        .chunked(2)
+        .joinToString(",") { it.reversed() }
+        .split(",")
+        .reversed()
+        .joinToString(",")
+    return "$grouped,$lastThree"
 }

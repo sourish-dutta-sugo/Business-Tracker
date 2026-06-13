@@ -25,3 +25,10 @@ actual class PlatformFileSaver {
         mimeType: String,
     ): String = fileName
 }
+
+actual class PlatformFilePicker {
+    actual fun pickFile(
+        accept: String,
+        onSelected: (ByteArray, String) -> Unit,
+    ) = Unit
+}

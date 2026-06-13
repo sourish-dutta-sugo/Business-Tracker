@@ -1,4 +1,4 @@
-CREATE TABLE business_profile (
+CREATE TABLE IF NOT EXISTS business_profile (
     id INTEGER NOT NULL PRIMARY KEY DEFAULT 1,
     business_name TEXT NOT NULL DEFAULT '',
     owner_name TEXT NOT NULL DEFAULT '',
@@ -27,7 +27,7 @@ CREATE TABLE business_profile (
     created_at INTEGER NOT NULL DEFAULT 0
 );
 
-CREATE TABLE parties (
+CREATE TABLE IF NOT EXISTS parties (
     id TEXT NOT NULL PRIMARY KEY,
     name TEXT NOT NULL,
     type TEXT NOT NULL DEFAULT 'CUSTOMER',
@@ -51,7 +51,7 @@ CREATE TABLE parties (
     created_at INTEGER NOT NULL DEFAULT 0
 );
 
-CREATE TABLE products (
+CREATE TABLE IF NOT EXISTS products (
     id TEXT NOT NULL PRIMARY KEY,
     name TEXT NOT NULL,
     hsn_code TEXT NOT NULL DEFAULT '',
@@ -69,7 +69,7 @@ CREATE TABLE products (
     created_at INTEGER NOT NULL DEFAULT 0
 );
 
-CREATE TABLE vouchers (
+CREATE TABLE IF NOT EXISTS vouchers (
     id TEXT NOT NULL PRIMARY KEY,
     voucher_no TEXT NOT NULL,
     type TEXT NOT NULL,
@@ -109,7 +109,7 @@ CREATE TABLE vouchers (
     created_at INTEGER NOT NULL DEFAULT 0
 );
 
-CREATE TABLE voucher_items (
+CREATE TABLE IF NOT EXISTS voucher_items (
     id TEXT NOT NULL PRIMARY KEY,
     voucher_id TEXT NOT NULL,
     product_id TEXT NOT NULL DEFAULT '',
@@ -128,7 +128,7 @@ CREATE TABLE voucher_items (
     total_amount REAL NOT NULL DEFAULT 0
 );
 
-CREATE TABLE ledger_entries (
+CREATE TABLE IF NOT EXISTS ledger_entries (
     id TEXT NOT NULL PRIMARY KEY,
     account_head TEXT NOT NULL,
     account_group TEXT NOT NULL DEFAULT '',
@@ -141,7 +141,7 @@ CREATE TABLE ledger_entries (
     created_at INTEGER NOT NULL DEFAULT 0
 );
 
-CREATE TABLE ledger_accounts (
+CREATE TABLE IF NOT EXISTS ledger_accounts (
     id TEXT NOT NULL PRIMARY KEY,
     name TEXT NOT NULL,
     group_name TEXT NOT NULL,
@@ -153,7 +153,7 @@ CREATE TABLE ledger_accounts (
     created_at INTEGER NOT NULL DEFAULT 0
 );
 
-CREATE TABLE expenses (
+CREATE TABLE IF NOT EXISTS expenses (
     id TEXT NOT NULL PRIMARY KEY,
     date TEXT NOT NULL,
     category TEXT NOT NULL,
@@ -169,6 +169,14 @@ CREATE TABLE expenses (
 
 getBusinessProfile:
 SELECT * FROM business_profile WHERE id = 1;
+
+getLedgerAccountCount:
+SELECT COUNT(*) FROM ledger_accounts;
+
+insertLedgerAccount:
+INSERT OR IGNORE INTO ledger_accounts(
+    id, name, group_name, opening_balance, balance_type, is_system, is_party, party_id, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 getAllParties:
 SELECT * FROM parties ORDER BY name ASC;
